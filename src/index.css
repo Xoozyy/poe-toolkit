@@ -1,0 +1,53 @@
+:root {
+  --bg-deep: #0b0d10;
+  --bg: #12151a;
+  --bg-elevated: #1a1f27;
+  --bg-hover: #242b36;
+  --line: #2e3642;
+  --text: #e8edf4;
+  --text-muted: #8b95a5;
+  --accent: #c9a227;
+  --accent-dim: #8a7020;
+  --ok: #5a9e72;
+  --danger: #c46a5a;
+  --font: 'Segoe UI', 'Trebuchet MS', sans-serif;
+  color: var(--text);
+  background: var(--bg-deep);
+  font-family: var(--font);
+  line-height: 1.4;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  min-height: 100%;
+}
+
+body {
+  min-width: 320px;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent);
+}
