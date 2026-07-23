@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   AnnouncementsResult,
   CurrencyExchangeRate,
+  CurrencyPairOption,
+  EconomyLeague,
+  InfoLayout,
   LeagueInfo,
   OrderPage,
   Recommendation,
@@ -13,6 +16,7 @@ import type {
 import { ToolCard } from './components/ToolCard';
 import { RecommendationCard } from './components/RecommendationCard';
 import { LeagueCountdown } from './components/LeagueCountdown';
+import { obscureSensitive } from './lib/streamer';
 import { AnnouncementsFeed } from './components/AnnouncementsFeed';
 import { CurrencyExchange } from './components/CurrencyExchange';
 import { TitleBar, useWindowChrome } from './components/TitleBar';
@@ -83,16 +87,42 @@ export default function App() {
   const [page, setPage] = useState<Page>('poe1');
   const [tools, setTools] = useState<ToolStatus[]>([]);
   const [recs, setRecs] = useState<Recommendation[]>([]);
-  const [league, setLeague] = useState<LeagueInfo | null>(null);
+  const [leaguePoe1, setLeaguePoe1] = useState<LeagueInfo | null>(null);
+  const [leaguePoe2, setLeaguePoe2] = useState<LeagueInfo | null>(null);
   const [announcements, setAnnouncements] =
     useState<AnnouncementsResult | null>(null);
   const [announcementsLoading, setAnnouncementsLoading] = useState(false);
-  const [currency, setCurrency] = useState<CurrencyExchangeRate | null>(null);
+  const [currencyPoe1, setCurrencyPoe1] = useState<CurrencyExchangeRate | null>(
+    null,
+  );
+  const [currencyPoe2, setCurrencyPoe2] = useState<CurrencyExchangeRate | null>(
+    null,
+  );
   const [currencyLoading, setCurrencyLoading] = useState(false);
+  const [currencyLeaguePoe1, setCurrencyLeaguePoe1] = useState<string>('Standard');
+  const [currencyLeaguePoe2, setCurrencyLeaguePoe2] = useState<string>('Standard');
+  const [currencyLeaguesPoe1, setCurrencyLeaguesPoe1] = useState<EconomyLeague[]>(
+    [],
+  );
+  const [currencyLeaguesPoe2, setCurrencyLeaguesPoe2] = useState<EconomyLeague[]>(
+    [],
+  );
+  const [currencyLeaguesLoading, setCurrencyLeaguesLoading] = useState(false);
+  const [currencyPairs, setCurrencyPairs] = useState<CurrencyPairOption[]>([]);
+  const [currencyPairIds, setCurrencyPairIds] = useState<string[]>([
+    'chaos-divine',
+  ]);
+  const [infoLayout, setInfoLayout] = useState<InfoLayout>('compact');
+  const [previewLeagueLaunch, setPreviewLeagueLaunch] = useState(false);
+  const [streamerMode, setStreamerMode] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addStep, setAddStep] = useState<'choose' | 'link'>('choose');
+  const [linkName, setLinkName] = useState('');
+  const [linkUrl, setLinkUrl] = useState('');
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [orders, setOrders] = useState<ToolOrders>(EMPTY_ORDERS);
 
@@ -129,18 +159,180 @@ export default function App() {
     if (!api) return;
     setCurrencyLoading(true);
     try {
-      setCurrency(await api.getCurrencyExchange());
+      const [rate1, rate2] = await Promise.all([
+        api.getCurrencyExchange('poe1'),
+        api.getCurrencyExchange('poe2'),
+      ]);
+      setCurrencyPoe1(rate1);
+      setCurrencyPoe2(rate2);
+      if (rate1?.league) setCurrencyLeaguePoe1(rate1.league);
+      if (rate2?.league) setCurrencyLeaguePoe2(rate2.league);
     } catch (err) {
-      setCurrency({
-        ok: false,
-        league: 'Standard',
-        chaosPerDivine: null,
-        error: String(err),
-      });
+      const message = String(err);
+      setCurrencyPoe1({ ok: false, game: 'poe1', league: 'Standard', error: message });
+      setCurrencyPoe2({ ok: false, game: 'poe2', league: 'Standard', error: message });
     } finally {
       setCurrencyLoading(false);
     }
   }, [api]);
+
+  const refreshCurrencyLeagues = useCallback(async () => {
+    if (!api) return;
+    setCurrencyLeaguesLoading(true);
+    try {
+      const [result1, result2] = await Promise.all([
+        api.listCurrencyLeagues('poe1'),
+        api.listCurrencyLeagues('poe2'),
+      ]);
+      setCurrencyLeaguesPoe1(result1.leagues || []);
+      setCurrencyLeaguesPoe2(result2.leagues || []);
+      if (result1.league) setCurrencyLeaguePoe1(result1.league);
+      if (result2.league) setCurrencyLeaguePoe2(result2.league);
+    } catch {
+      setCurrencyLeaguesPoe1([]);
+      setCurrencyLeaguesPoe2([]);
+    } finally {
+      setCurrencyLeaguesLoading(false);
+    }
+  }, [api]);
+
+  const refreshCurrencyPairs = useCallback(async () => {
+    if (!api) return;
+    try {
+      const result = await api.listCurrencyPairs();
+      setCurrencyPairs(result.pairs || []);
+      if (Array.isArray(result.selectedIds) && result.selectedIds.length > 0) {
+        setCurrencyPairIds(result.selectedIds);
+      }
+    } catch {
+      setCurrencyPairs([]);
+    }
+  }, [api]);
+
+  const onCurrencyLeagueChange = useCallback(
+    async (game: 'poe1' | 'poe2', leagueId: string) => {
+      if (!api || !leagueId) return;
+      if (game === 'poe2') setCurrencyLeaguePoe2(leagueId);
+      else setCurrencyLeaguePoe1(leagueId);
+      setCurrencyLoading(true);
+      try {
+        const result = await api.setCurrencyLeague(leagueId, game);
+        if (!result.ok) {
+          showToast(result.error || 'Could not change league');
+          void refreshCurrencyLeagues();
+          return;
+        }
+        if (game === 'poe2') {
+          if (result.leagues) setCurrencyLeaguesPoe2(result.leagues);
+          if (result.league) setCurrencyLeaguePoe2(result.league);
+          if (result.rate) setCurrencyPoe2(result.rate);
+          else void refreshCurrency();
+        } else {
+          if (result.leagues) setCurrencyLeaguesPoe1(result.leagues);
+          if (result.league) setCurrencyLeaguePoe1(result.league);
+          if (result.rate) setCurrencyPoe1(result.rate);
+          else void refreshCurrency();
+        }
+      } catch (err) {
+        showToast(String(err));
+      } finally {
+        setCurrencyLoading(false);
+      }
+    },
+    [api, refreshCurrency, refreshCurrencyLeagues, showToast],
+  );
+
+  const onCurrencyPairToggle = useCallback(
+    async (pairId: string, enabled: boolean) => {
+      if (!api) return;
+      const next = enabled
+        ? [...new Set([...currencyPairIds, pairId])]
+        : currencyPairIds.filter((id) => id !== pairId);
+      if (next.length === 0) {
+        showToast('Keep at least one currency pair enabled');
+        return;
+      }
+      setCurrencyPairIds(next);
+      setCurrencyLoading(true);
+      try {
+        const result = await api.setCurrencyPairs(next);
+        if (!result.ok) {
+          showToast(result.error || 'Could not update currency pairs');
+          void refreshCurrencyPairs();
+          return;
+        }
+        if (result.pairs) setCurrencyPairs(result.pairs);
+        if (result.selectedIds) setCurrencyPairIds(result.selectedIds);
+        if (result.ratePoe1) setCurrencyPoe1(result.ratePoe1);
+        if (result.ratePoe2) setCurrencyPoe2(result.ratePoe2);
+        if (!result.ratePoe1 || !result.ratePoe2) void refreshCurrency();
+      } catch (err) {
+        showToast(String(err));
+      } finally {
+        setCurrencyLoading(false);
+      }
+    },
+    [api, currencyPairIds, refreshCurrency, refreshCurrencyPairs, showToast],
+  );
+
+  const refreshLeague = useCallback(async () => {
+    if (!api) return;
+    try {
+      const [poe1Info, poe2Info] = await Promise.all([
+        api.getLeague('poe1'),
+        api.getLeague('poe2'),
+      ]);
+      setLeaguePoe1(poe1Info);
+      setLeaguePoe2(poe2Info);
+    } catch {
+      /* keep last known */
+    }
+  }, [api]);
+
+  const onInfoLayoutChange = useCallback(
+    async (layout: InfoLayout) => {
+      if (!api) return;
+      setInfoLayout(layout);
+      try {
+        const result = await api.setInfoLayout(layout);
+        if (result?.infoLayout) setInfoLayout(result.infoLayout);
+      } catch (err) {
+        showToast(String(err));
+      }
+    },
+    [api, showToast],
+  );
+
+  const onPreviewLeagueLaunchChange = useCallback(
+    async (enabled: boolean) => {
+      if (!api) return;
+      setPreviewLeagueLaunch(enabled);
+      try {
+        const result = await api.setPreviewLeagueLaunch(enabled);
+        setPreviewLeagueLaunch(Boolean(result?.previewLeagueLaunch));
+        await refreshLeague();
+      } catch (err) {
+        showToast(String(err));
+        setPreviewLeagueLaunch(!enabled);
+      }
+    },
+    [api, refreshLeague, showToast],
+  );
+
+  const onStreamerModeChange = useCallback(
+    async (enabled: boolean) => {
+      if (!api) return;
+      setStreamerMode(enabled);
+      try {
+        const result = await api.setStreamerMode(enabled);
+        setStreamerMode(Boolean(result?.streamerMode));
+      } catch (err) {
+        showToast(String(err));
+        setStreamerMode(!enabled);
+      }
+    },
+    [api, showToast],
+  );
 
   const refresh = useCallback(async () => {
     if (!api) {
@@ -149,16 +341,33 @@ export default function App() {
     }
     setLoading(true);
     try {
-      const [list, recommendations, leagueInfo, toolOrders] = await Promise.all([
+      const [
+        list,
+        recommendations,
+        league1,
+        league2,
+        toolOrders,
+        layout,
+        preview,
+        streamer,
+      ] = await Promise.all([
         api.listTools(),
         api.listRecommendations(),
-        api.getLeague(),
+        api.getLeague('poe1'),
+        api.getLeague('poe2'),
         api.getToolOrders(),
+        api.getInfoLayout(),
+        api.getPreviewLeagueLaunch(),
+        api.getStreamerMode(),
       ]);
       setTools(list);
       setRecs(recommendations);
-      setLeague(leagueInfo);
+      setLeaguePoe1(league1);
+      setLeaguePoe2(league2);
       setOrders(toolOrders);
+      setInfoLayout(layout === 'normal' ? 'normal' : 'compact');
+      setPreviewLeagueLaunch(Boolean(preview));
+      setStreamerMode(Boolean(streamer));
       void refreshAnnouncements();
       void refreshCurrency();
     } catch (err) {
@@ -177,14 +386,37 @@ export default function App() {
     const id = window.setInterval(() => {
       void refreshAnnouncements();
       void refreshCurrency();
+      void refreshLeague();
     }, 15 * 60 * 1000);
     return () => window.clearInterval(id);
-  }, [api, refreshAnnouncements, refreshCurrency]);
+  }, [api, refreshAnnouncements, refreshCurrency, refreshLeague]);
+
+  // Closer poll near launch so poe.ninja detection / schedule flip feels snappy
+  useEffect(() => {
+    if (!api) return;
+    const nearLaunch = [leaguePoe1, leaguePoe2].some((info) => {
+      if (!info?.startMs || info.stage === 'login') return false;
+      return info.startMs - Date.now() <= 6 * 60 * 60 * 1000;
+    });
+    if (!nearLaunch) return;
+    const id = window.setInterval(() => {
+      void refreshLeague();
+    }, 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [api, leaguePoe1, leaguePoe2, refreshLeague]);
+
+  // Countdown widget is only useful pre-launch (PoE1)
+  useEffect(() => {
+    if (!api || leaguePoe1?.stage !== 'login') return;
+    void api.closeLeagueWidget();
+  }, [api, leaguePoe1?.stage]);
 
   useEffect(() => {
     if (!api || !settingsOpen) return;
     void api.getStorageInfo().then(setStorageInfo).catch(() => setStorageInfo(null));
-  }, [api, settingsOpen]);
+    void refreshCurrencyLeagues();
+    void refreshCurrencyPairs();
+  }, [api, settingsOpen, refreshCurrencyLeagues, refreshCurrencyPairs]);
 
   const pageTools = useMemo(() => {
     if (page === 'unused') {
@@ -317,12 +549,47 @@ export default function App() {
 
   async function onAddApp() {
     if (!api || !canAddApp) return;
+    setAddStep('choose');
+    setLinkName('');
+    setLinkUrl('');
+    setAddOpen(true);
+  }
+
+  async function onAddApplication() {
+    if (!api || !canAddApp) return;
+    setAddOpen(false);
     const category = page as ToolCategory;
-    const result = await api.addCustom({ category });
+    const result = await api.addCustom({ category, kind: 'app' });
     if (result.canceled) return;
     applyBundle(result);
     if (result.error) showToast(result.error);
     else if (result.ok) showToast('Custom app added');
+  }
+
+  async function onAddWebsiteLink() {
+    if (!api || !canAddApp) return;
+    const url = linkUrl.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      showToast('Enter a valid http(s) URL');
+      return;
+    }
+    const category = page as ToolCategory;
+    const result = await api.addCustom({
+      category,
+      kind: 'link',
+      url,
+      name: linkName.trim() || undefined,
+      blurb: 'Website shortcut',
+    });
+    applyBundle(result);
+    if (result.error) {
+      showToast(result.error);
+      return;
+    }
+    setAddOpen(false);
+    setLinkName('');
+    setLinkUrl('');
+    if (result.ok) showToast('Website shortcut added');
   }
 
   async function onResetDismissed() {
@@ -373,14 +640,11 @@ export default function App() {
         </nav>
 
         <div className="sidebar-footer">
-          <button
-            type="button"
-            className="btn btn-ghost btn-block"
-            onClick={() => void onRescan()}
-            disabled={loading || !isLaunchPage}
-          >
-            Rescan
-          </button>
+          {streamerMode && (
+            <p className="streamer-mode-pill" title="Paths and personal details are hidden">
+              Streamer mode
+            </p>
+          )}
           <button
             type="button"
             className="btn btn-ghost btn-block"
@@ -400,14 +664,28 @@ export default function App() {
             <h1 className="page-title">{copy.title}</h1>
             <p className="page-lede">{copy.lede}</p>
           </div>
-          {canAddApp && (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => void onAddApp()}
-            >
-              Add app
-            </button>
+          {(isLaunchPage || canAddApp) && (
+            <div className="page-header-actions">
+              {isLaunchPage && (
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void onRescan()}
+                  disabled={loading}
+                >
+                  Rescan
+                </button>
+              )}
+              {canAddApp && (
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => void onAddApp()}
+                >
+                  Add
+                </button>
+              )}
+            </div>
           )}
         </header>
 
@@ -415,63 +693,137 @@ export default function App() {
           {isLaunchPage && (
             <>
               {page === 'poe1' && (
-                <LeagueCountdown
-                  league={league}
-                  onOpenWidget={() => {
-                    void api.openLeagueWidget();
-                  }}
-                />
-              )}
-              {page === 'poe1' && (
-                <AnnouncementsFeed
-                  feed={announcements}
-                  loading={announcementsLoading}
-                  onRefresh={() => void refreshAnnouncements()}
-                  onOpen={(item) => {
-                    void (async () => {
-                      await api.markAnnouncementRead(item.id);
-                      void api.openExternal(item.url);
-                      void refreshAnnouncements();
-                    })();
-                  }}
-                />
-              )}
-              {page === 'poe1' && (
-                <CurrencyExchange data={currency} loading={currencyLoading} />
-              )}
-              {loading && pageEntries.length === 0 ? (
-                <p className="muted">Scanning for installations…</p>
-              ) : pageEntries.length === 0 ? (
-                <p className="muted">No apps on this tab. Use Add app to include one.</p>
-              ) : (
-                <section className="category">
-                  <SortableGrid
-                    className="tool-grid"
-                    ids={pageEntryIds}
-                    onReorder={(ids) => void onReorder(ids)}
+                <div
+                  className="info-zone"
+                >
+                  <div className="info-zone-toolbar">
+                    <span className="info-zone-label">League & news</span>
+                    <div className="info-layout-toggle" role="group" aria-label="Info layout">
+                      <button
+                        type="button"
+                        className={`info-layout-btn${infoLayout === 'compact' ? ' is-active' : ''}`}
+                        aria-pressed={infoLayout === 'compact'}
+                        onClick={() => void onInfoLayoutChange('compact')}
+                      >
+                        Compact
+                      </button>
+                      <button
+                        type="button"
+                        className={`info-layout-btn${infoLayout === 'normal' ? ' is-active' : ''}`}
+                        aria-pressed={infoLayout === 'normal'}
+                        onClick={() => void onInfoLayoutChange('normal')}
+                      >
+                        Normal
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    className={
+                      infoLayout === 'compact' ? 'info-strip' : 'info-stack'
+                    }
                   >
-                    {(id, bind) => {
-                      const entry = entryById.get(id);
-                      if (!entry || entry.kind !== 'tool') return null;
-                      const tool = entry.tool;
-                      return (
-                        <ToolCard
-                          tool={tool}
-                          busy={busyId === tool.id}
-                          sortable={bind}
-                          onLaunch={() => void onLaunch(tool.id)}
-                          onPick={() => void onPick(tool.id)}
-                          onClear={() => void onClear(tool.id)}
-                          onDownload={() => void onDownload(tool.id)}
-                          onDismiss={() => void onDismiss(tool.id)}
-                          onHide={() => void onHide(tool.id)}
-                          onRestore={() => void onRestore(tool.id)}
-                        />
-                      );
-                    }}
-                  </SortableGrid>
-                </section>
+                    <LeagueCountdown
+                      league={leaguePoe1}
+                      density={infoLayout}
+                      onOpenWidget={() => {
+                        void api.openLeagueWidget();
+                      }}
+                      onLaunchGame={() => {
+                        void onLaunch('poe1');
+                      }}
+                    />
+                    <AnnouncementsFeed
+                      feed={announcements}
+                      loading={announcementsLoading}
+                      density={infoLayout}
+                      onRefresh={() => void refreshAnnouncements()}
+                      onOpen={(item) => {
+                        void (async () => {
+                          await api.markAnnouncementRead(item.id);
+                          void api.openExternal(item.url);
+                          void refreshAnnouncements();
+                        })();
+                      }}
+                    />
+                  </div>
+                </div>
               )}
+              {page === 'poe2' && (
+                <div
+                  className="info-zone"
+                >
+                  <div className="info-zone-toolbar">
+                    <span className="info-zone-label">League</span>
+                    <div className="info-layout-toggle" role="group" aria-label="Info layout">
+                      <button
+                        type="button"
+                        className={`info-layout-btn${infoLayout === 'compact' ? ' is-active' : ''}`}
+                        aria-pressed={infoLayout === 'compact'}
+                        onClick={() => void onInfoLayoutChange('compact')}
+                      >
+                        Compact
+                      </button>
+                      <button
+                        type="button"
+                        className={`info-layout-btn${infoLayout === 'normal' ? ' is-active' : ''}`}
+                        aria-pressed={infoLayout === 'normal'}
+                        onClick={() => void onInfoLayoutChange('normal')}
+                      >
+                        Normal
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    className={
+                      infoLayout === 'compact' ? 'info-strip' : 'info-stack'
+                    }
+                  >
+                    <LeagueCountdown
+                      league={leaguePoe2}
+                      density={infoLayout}
+                      onLaunchGame={() => {
+                        void onLaunch('poe2');
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="workspace-primary">
+                {loading && pageEntries.length === 0 ? (
+                  <p className="muted">Scanning for installations…</p>
+                ) : pageEntries.length === 0 ? (
+                  <p className="muted">No apps on this tab. Use Add to include one.</p>
+                ) : (
+                  <section className="category">
+                    <SortableGrid
+                      className="tool-grid"
+                      ids={pageEntryIds}
+                      onReorder={(ids) => void onReorder(ids)}
+                    >
+                      {(id, bind) => {
+                        const entry = entryById.get(id);
+                        if (!entry || entry.kind !== 'tool') return null;
+                        const tool = entry.tool;
+                        return (
+                          <ToolCard
+                            tool={tool}
+                            busy={busyId === tool.id}
+                            streamerMode={streamerMode}
+                            sortable={bind}
+                            onLaunch={() => void onLaunch(tool.id)}
+                            onPick={() => void onPick(tool.id)}
+                            onClear={() => void onClear(tool.id)}
+                            onDownload={() => void onDownload(tool.id)}
+                            onDismiss={() => void onDismiss(tool.id)}
+                            onHide={() => void onHide(tool.id)}
+                            onRestore={() => void onRestore(tool.id)}
+                          />
+                        );
+                      }}
+                    </SortableGrid>
+                  </section>
+                )}
+              </div>
             </>
           )}
 
@@ -504,6 +856,7 @@ export default function App() {
                       <ToolCard
                         tool={tool}
                         busy={busyId === tool.id}
+                        streamerMode={streamerMode}
                         sortable={bind}
                         onLaunch={() => void onLaunch(tool.id)}
                         onPick={() => void onPick(tool.id)}
@@ -553,6 +906,7 @@ export default function App() {
                         tool={tool}
                         mode="unused"
                         busy={false}
+                        streamerMode={streamerMode}
                         sortable={bind}
                         onLaunch={() => undefined}
                         onPick={() => undefined}
@@ -574,6 +928,121 @@ export default function App() {
             </section>
           )}
         </main>
+
+        {(page === 'poe1' || page === 'poe2') && (
+          <CurrencyExchange
+            data={page === 'poe2' ? currencyPoe2 : currencyPoe1}
+            loading={currencyLoading}
+            onOpen={(url) => {
+              void api.openExternal(url);
+            }}
+          />
+        )}
+
+        {addOpen && (
+          <div className="settings-layer" role="presentation">
+            <button
+              type="button"
+              className="settings-backdrop"
+              aria-label="Close add dialog"
+              onClick={() => setAddOpen(false)}
+            />
+            <div
+              className="settings-sheet add-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="add-title"
+            >
+              <div className="settings-sheet-handle" aria-hidden />
+              <div className="settings-sheet-head">
+                <h2 id="add-title" className="settings-sheet-title">
+                  {addStep === 'link' ? 'Add website' : 'Add to this tab'}
+                </h2>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setAddOpen(false)}
+                >
+                  Close
+                </button>
+              </div>
+
+              {addStep === 'choose' ? (
+                <>
+                  <p className="settings-sheet-copy">
+                    Add a local application, or a website shortcut that opens in
+                    your browser (guides, spreadsheets, trade sites, and so on).
+                  </p>
+                  <div className="settings-sheet-actions">
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => void onAddApplication()}
+                    >
+                      Application
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-accent"
+                      onClick={() => setAddStep('link')}
+                    >
+                      Website
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="settings-sheet-copy">
+                    Paste any http(s) link. Example: a Google Sheet league starter
+                    compendium.
+                  </p>
+                  <div className="settings-field">
+                    <label className="settings-field-label" htmlFor="link-name">
+                      Name
+                    </label>
+                    <input
+                      id="link-name"
+                      className="settings-input"
+                      type="text"
+                      value={linkName}
+                      placeholder="3.29 Leaguestarter Compendium"
+                      onChange={(event) => setLinkName(event.target.value)}
+                    />
+                  </div>
+                  <div className="settings-field">
+                    <label className="settings-field-label" htmlFor="link-url">
+                      URL
+                    </label>
+                    <input
+                      id="link-url"
+                      className="settings-input"
+                      type="url"
+                      value={linkUrl}
+                      placeholder="https://…"
+                      onChange={(event) => setLinkUrl(event.target.value)}
+                    />
+                  </div>
+                  <div className="settings-sheet-actions">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => setAddStep('choose')}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void onAddWebsiteLink()}
+                    >
+                      Add website
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         {settingsOpen && (
           <div className="settings-layer" role="presentation">
@@ -607,11 +1076,184 @@ export default function App() {
                 saved on this PC and kept after you close the app including
                 the portable build. Deleting the .exe does not remove that data.
               </p>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="streamer-mode">
+                  Streamer mode
+                </label>
+                <p className="settings-field-hint">
+                  Hides install paths, website URLs, and the settings file
+                  location so they do not show on stream. Tooltips with full
+                  paths are disabled too.
+                </p>
+                <label className="settings-check" htmlFor="streamer-mode">
+                  <input
+                    id="streamer-mode"
+                    type="checkbox"
+                    checked={streamerMode}
+                    onChange={(event) => {
+                      void onStreamerModeChange(event.target.checked);
+                    }}
+                  />
+                  <span>Hide paths and personal details</span>
+                </label>
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="info-layout">
+                  League & news layout
+                </label>
+                <p className="settings-field-hint">
+                  Compact puts countdown and announcements in a side-by-side
+                  strip. Normal stacks the fuller versions above your apps.
+                </p>
+                <select
+                  id="info-layout"
+                  className="settings-select"
+                  value={infoLayout}
+                  onChange={(event) => {
+                    void onInfoLayoutChange(
+                      event.target.value === 'normal' ? 'normal' : 'compact',
+                    );
+                  }}
+                >
+                  <option value="compact">Compact</option>
+                  <option value="normal">Normal</option>
+                </select>
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="preview-league-launch">
+                  Preview league LOGIN banner
+                </label>
+                <p className="settings-field-hint">
+                  Force the launch funnel stage now so you can test the LOGIN!
+                  banner before the league goes live on poe.ninja.
+                </p>
+                <label className="settings-check" htmlFor="preview-league-launch">
+                  <input
+                    id="preview-league-launch"
+                    type="checkbox"
+                    checked={previewLeagueLaunch}
+                    onChange={(event) => {
+                      void onPreviewLeagueLaunchChange(event.target.checked);
+                    }}
+                  />
+                  <span>Show LOGIN! launch banner (test mode)</span>
+                </label>
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="currency-league-poe1">
+                  PoE1 poe.ninja exchange league
+                </label>
+                <p className="settings-field-hint">
+                  Active leagues are pulled from poe.ninja, so a new challenge
+                  league appears here when they start indexing it.
+                </p>
+                <select
+                  id="currency-league-poe1"
+                  className="settings-select"
+                  value={currencyLeaguePoe1}
+                  disabled={currencyLeaguesPoe1.length === 0}
+                  onChange={(event) => {
+                    void onCurrencyLeagueChange('poe1', event.target.value);
+                  }}
+                >
+                  {currencyLeaguesPoe1.length === 0 ? (
+                    <option value={currencyLeaguePoe1}>
+                      {currencyLeaguesLoading
+                        ? 'Loading leagues…'
+                        : currencyLeaguePoe1}
+                    </option>
+                  ) : (
+                    currencyLeaguesPoe1.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="currency-league-poe2">
+                  PoE2 poe.ninja exchange league
+                </label>
+                <p className="settings-field-hint">
+                  Same idea for Path of Exile 2 economy leagues on poe.ninja.
+                </p>
+                <select
+                  id="currency-league-poe2"
+                  className="settings-select"
+                  value={currencyLeaguePoe2}
+                  disabled={currencyLeaguesPoe2.length === 0}
+                  onChange={(event) => {
+                    void onCurrencyLeagueChange('poe2', event.target.value);
+                  }}
+                >
+                  {currencyLeaguesPoe2.length === 0 ? (
+                    <option value={currencyLeaguePoe2}>
+                      {currencyLeaguesLoading
+                        ? 'Loading leagues…'
+                        : currencyLeaguePoe2}
+                    </option>
+                  ) : (
+                    currencyLeaguesPoe2.map((entry) => (
+                      <option key={entry.id} value={entry.id}>
+                        {entry.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div className="settings-field">
+                <p className="settings-field-label">Exchange rates to show</p>
+                <p className="settings-field-hint">
+                  Pick one or more pairs. Chaos → Divine shows the classic
+                  1 Divine = N Chaos rate; Mirror and Hinekora show value in
+                  Divines.
+                </p>
+                <div className="settings-check-list">
+                  {(currencyPairs.length > 0
+                    ? currencyPairs
+                    : [
+                        { id: 'chaos-divine', label: 'Chaos → Divine' },
+                        { id: 'mirror-divine', label: 'Mirror → Divine' },
+                        {
+                          id: 'hinekoras-lock-divine',
+                          label: "Hinekora's Lock → Divine",
+                        },
+                      ]
+                  ).map((pair) => (
+                    <label
+                      key={pair.id}
+                      className="settings-check"
+                      htmlFor={`currency-pair-${pair.id}`}
+                    >
+                      <input
+                        id={`currency-pair-${pair.id}`}
+                        type="checkbox"
+                        checked={currencyPairIds.includes(pair.id)}
+                        onChange={(event) => {
+                          void onCurrencyPairToggle(
+                            pair.id,
+                            event.target.checked,
+                          );
+                        }}
+                      />
+                      <span>{pair.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
               {storageInfo && (
                 <div className="settings-storage">
                   <p className="settings-storage-label">Saved settings file</p>
-                  <code className="settings-storage-path" title={storageInfo.configPath}>
-                    {storageInfo.configPath}
+                  <code
+                    className="settings-storage-path"
+                    title={
+                      streamerMode ? undefined : storageInfo.configPath
+                    }
+                  >
+                    {streamerMode
+                      ? obscureSensitive(storageInfo.configPath, 'path')
+                      : storageInfo.configPath}
                   </code>
                 </div>
               )}
@@ -626,6 +1268,12 @@ export default function App() {
                 <button
                   type="button"
                   className="btn btn-ghost"
+                  disabled={streamerMode}
+                  title={
+                    streamerMode
+                      ? 'Disabled in streamer mode (opens a folder with your username)'
+                      : undefined
+                  }
                   onClick={() => {
                     void api.openStorageFolder().then((result) => {
                       if (!result.ok) showToast(result.error || 'Could not open folder');

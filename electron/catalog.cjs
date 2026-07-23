@@ -126,9 +126,9 @@ const CATALOG = [
   },
   {
     id: 'pob-community',
-    name: 'Path of Building (Community)',
+    name: 'Path of Building',
     category: 'poe1',
-    blurb: 'PoE1 offline build planner',
+    blurb: 'Community fork · PoE1 offline build planner',
     exeNames: ['Path of Building.exe', 'PathOfBuilding.exe'],
     pathHints: [
       `${PROGRAM_FILES}\\Path of Building Community\\Path of Building.exe`,
@@ -140,9 +140,9 @@ const CATALOG = [
   },
   {
     id: 'pob-community-poe2',
-    name: 'Path of Building Community (PoE2)',
+    name: 'Path of Building (PoE2)',
     category: 'poe2',
-    blurb: 'PoE2 offline build planner',
+    blurb: 'Community fork · PoE2 offline build planner',
     exeNames: [
       'Path of Building.exe',
       'PathOfBuilding.exe',

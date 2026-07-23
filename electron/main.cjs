@@ -21,6 +21,16 @@ const {
   resetDismissed,
   readConfig,
   getLeague,
+  getCurrencyLeague,
+  setCurrencyLeague,
+  getInfoLayout,
+  setInfoLayout,
+  getPreviewLeagueLaunch,
+  setPreviewLeagueLaunch,
+  getStreamerMode,
+  setStreamerMode,
+  getCurrencyPairIds,
+  setCurrencyPairIds,
   configPath,
   setUnused,
   addCustomApp,
@@ -32,7 +42,37 @@ const {
 } = require('./config.cjs');
 const { getLeagueInfo } = require('./league.cjs');
 const { fetchAnnouncements } = require('./announcements.cjs');
-const { fetchCurrencyExchange } = require('./currency.cjs');
+const {
+  fetchCurrencyExchange,
+  fetchEconomyLeagues,
+  pickDefaultLeague,
+  listCurrencyPairs,
+  normalizeGame,
+} = require('./currency.cjs');
+
+/**
+ * Resolve which economy league to use for exchange rates.
+ * Saved preference wins when still listed; otherwise auto-pick and persist.
+ */
+async function resolveCurrencyLeague(game = 'poe1') {
+  const g = normalizeGame(game);
+  const listed = await fetchEconomyLeagues(g);
+  const leagues = listed.leagues || [];
+  const saved = getCurrencyLeague(g);
+  const stillListed =
+    saved && leagues.some((entry) => entry.id === saved) ? saved : null;
+  const league = stillListed || pickDefaultLeague(leagues);
+  if (league !== saved) {
+    setCurrencyLeague(league, g);
+  }
+  return {
+    game: g,
+    league,
+    leagues,
+    leaguesOk: listed.ok,
+    leaguesError: listed.error,
+  };
+}
 
 const isDev = !app.isPackaged;
 
@@ -40,6 +80,15 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 /** @type {BrowserWindow | null} */
 let leagueWidget = null;
+
+async function resolveLeagueInfo(game = 'poe1') {
+  const listed = await fetchEconomyLeagues(game);
+  return getLeagueInfo(getLeague(game), {
+    game,
+    economyLeagues: listed.leagues || [],
+    forcePreview: game === 'poe1' ? getPreviewLeagueLaunch() : false,
+  });
+}
 
 function loadRenderer(win, page) {
   if (isDev) {
@@ -175,7 +224,9 @@ function registerIpc() {
   ipcMain.handle('tools:list', () => listTools());
   ipcMain.handle('tools:rescan', () => listTools());
   ipcMain.handle('recommendations:list', () => listRecommendations());
-  ipcMain.handle('league:get', () => getLeagueInfo(getLeague()));
+  ipcMain.handle('league:get', (_event, game) =>
+    resolveLeagueInfo(game === 'poe2' ? 'poe2' : 'poe1'),
+  );
   ipcMain.handle('league:openWidget', () => {
     createLeagueWidget();
     return { ok: true };
@@ -186,14 +237,22 @@ function registerIpc() {
     }
     return { ok: true };
   });
+  ipcMain.handle('ui:getPreviewLeagueLaunch', () => getPreviewLeagueLaunch());
+  ipcMain.handle('ui:setPreviewLeagueLaunch', (_event, enabled) => {
+    const previewLeagueLaunch = setPreviewLeagueLaunch(Boolean(enabled));
+    return { ok: true, previewLeagueLaunch };
+  });
+  ipcMain.handle('ui:getStreamerMode', () => getStreamerMode());
+  ipcMain.handle('ui:setStreamerMode', (_event, enabled) => {
+    const streamerMode = setStreamerMode(Boolean(enabled));
+    return { ok: true, streamerMode };
+  });
   ipcMain.handle('announcements:list', async () => {
-    const result = await fetchAnnouncements(2);
+    const result = await fetchAnnouncements(5);
     const readIds = new Set(getReadAnnouncementIds());
-    const items = (result.items || []).map((item) => ({
-      ...item,
-      read: readIds.has(String(item.id)),
-    }));
-    const highlightId = items.find((item) => !item.read)?.id ?? null;
+    const items = result.items || [];
+    const highlightId =
+      items.find((item) => !readIds.has(String(item.id)))?.id ?? null;
     return { ...result, items, highlightId };
   });
   ipcMain.handle('announcements:markRead', (_event, id) => {
@@ -201,11 +260,88 @@ function registerIpc() {
     markAnnouncementRead(id);
     return { ok: true };
   });
-  ipcMain.handle('currency:getExchange', () => fetchCurrencyExchange('Standard'));
+  ipcMain.handle('currency:getExchange', async (_event, game) => {
+    const g = normalizeGame(game);
+    const { league, leagues } = await resolveCurrencyLeague(g);
+    return fetchCurrencyExchange(league, leagues, getCurrencyPairIds(), g);
+  });
+  ipcMain.handle('currency:listLeagues', async (_event, game) => {
+    const g = normalizeGame(game);
+    const { league, leagues, leaguesOk, leaguesError } =
+      await resolveCurrencyLeague(g);
+    return {
+      ok: leaguesOk,
+      error: leaguesError,
+      game: g,
+      league,
+      leagues,
+    };
+  });
+  ipcMain.handle('currency:listPairs', () => ({
+    ok: true,
+    pairs: listCurrencyPairs(),
+    selectedIds: getCurrencyPairIds(),
+  }));
+  ipcMain.handle('currency:setPairs', async (_event, ids) => {
+    const selectedIds = setCurrencyPairIds(ids);
+    const [poe1, poe2] = await Promise.all([
+      resolveCurrencyLeague('poe1'),
+      resolveCurrencyLeague('poe2'),
+    ]);
+    const [ratePoe1, ratePoe2] = await Promise.all([
+      fetchCurrencyExchange(
+        poe1.league,
+        poe1.leagues,
+        selectedIds,
+        'poe1',
+      ),
+      fetchCurrencyExchange(
+        poe2.league,
+        poe2.leagues,
+        selectedIds,
+        'poe2',
+      ),
+    ]);
+    return {
+      ok: true,
+      selectedIds,
+      pairs: listCurrencyPairs(),
+      ratePoe1,
+      ratePoe2,
+    };
+  });
+  ipcMain.handle('currency:setLeague', async (_event, leagueId, game) => {
+    if (typeof leagueId !== 'string' || !leagueId.trim()) {
+      return { ok: false, error: 'Invalid league' };
+    }
+    const g = normalizeGame(game);
+    const listed = await fetchEconomyLeagues(g);
+    const id = leagueId.trim();
+    const known = (listed.leagues || []).some((entry) => entry.id === id);
+    if (!known && listed.ok) {
+      return { ok: false, error: 'League is not currently available on poe.ninja' };
+    }
+    setCurrencyLeague(id, g);
+    const rate = await fetchCurrencyExchange(
+      id,
+      listed.leagues,
+      getCurrencyPairIds(),
+      g,
+    );
+    return {
+      ok: true,
+      game: g,
+      league: id,
+      leagues: listed.leagues,
+      rate,
+    };
+  });
+  ipcMain.handle('ui:getInfoLayout', () => getInfoLayout());
+  ipcMain.handle('ui:setInfoLayout', (_event, layout) => {
+    return { ok: true, infoLayout: setInfoLayout(layout) };
+  });
   ipcMain.handle('storage:getInfo', () => ({
     configPath: configPath(),
-    userDataPath: app.getPath('userData'),
-    packaged: app.isPackaged,
   }));
   ipcMain.handle('storage:openFolder', async () => {
     const folder = app.getPath('userData');
@@ -240,7 +376,20 @@ function registerIpc() {
   ipcMain.handle('tools:launch', async (_event, toolId) => {
     const tools = listTools();
     const tool = tools.find((t) => t.id === toolId);
-    if (!tool?.ready || !tool.resolvedPath) {
+    if (!tool?.ready) {
+      return { ok: false, error: 'Not ready. Set a path or URL first.' };
+    }
+
+    if (tool.isLink || (tool.openUrl && /^https?:\/\//i.test(tool.openUrl))) {
+      const url = tool.openUrl || tool.resolvedPath;
+      if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
+        return { ok: false, error: 'Invalid website URL.' };
+      }
+      await shell.openExternal(url);
+      return { ok: true };
+    }
+
+    if (!tool.resolvedPath) {
       return { ok: false, error: 'Executable not found. Set a path first.' };
     }
 
@@ -299,6 +448,40 @@ function registerIpc() {
       payload?.category === 'poe2' || payload?.category === 'optional'
         ? payload.category
         : 'poe1';
+
+    if (payload?.kind === 'link') {
+      const url = typeof payload.url === 'string' ? payload.url.trim() : '';
+      if (!/^https?:\/\//i.test(url)) {
+        return {
+          ok: false,
+          error: 'Enter a valid http(s) URL.',
+          tools: listTools(),
+          recommendations: listRecommendations(),
+        };
+      }
+      let name =
+        (payload?.name && String(payload.name).trim()) || '';
+      if (!name) {
+        try {
+          name = new URL(url).hostname.replace(/^www\./i, '') || 'Web link';
+        } catch {
+          name = 'Web link';
+        }
+      }
+      addCustomApp({
+        name,
+        category,
+        kind: 'link',
+        url,
+        blurb: payload?.blurb || 'Website shortcut',
+      });
+      return {
+        ok: true,
+        tools: listTools(),
+        recommendations: listRecommendations(),
+      };
+    }
+
     let exePath = payload?.exePath || null;
     if (!exePath) {
       exePath = await pickExeDialog(event, 'Choose application executable');
@@ -325,6 +508,7 @@ function registerIpc() {
     addCustomApp({
       name,
       category,
+      kind: 'app',
       exePath,
       blurb: payload?.blurb || 'Custom application',
       downloadUrl: payload?.downloadUrl || null,

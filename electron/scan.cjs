@@ -54,6 +54,7 @@ function resolveToolPath(tool, customPaths) {
 function toToolStatus(tool, config, extras = {}) {
   const unused = config.unusedIds.includes(tool.id);
   const downloadDismissed = config.dismissedDownloads.includes(tool.id);
+  const isLink = Boolean(extras.isLink);
   const { resolvedPath, source } = extras.resolvedPath
     ? { resolvedPath: extras.resolvedPath, source: extras.source || 'custom' }
     : resolveToolPath(tool, config.customPaths);
@@ -74,19 +75,24 @@ function toToolStatus(tool, config, extras = {}) {
         ? tool.exePath || null
         : config.customPaths[tool.id] || null,
     showDownloadPrompt:
-      !ready && Boolean(tool.downloadUrl) && !downloadDismissed && !unused,
-    downloadDismissed,
+      !isLink &&
+      !ready &&
+      Boolean(tool.downloadUrl) &&
+      !downloadDismissed &&
+      !unused,
     unused,
     isCustom: Boolean(extras.isCustom),
-    launchable: extras.launchable !== false,
+    isLink,
+    openUrl: extras.openUrl || null,
   };
 }
 
 function listTools() {
   const config = readConfig();
   const catalogTools = CATALOG.map((tool) => toToolStatus(tool, config));
-  const customTools = config.customApps.map((appDef) =>
-    toToolStatus(
+  const customTools = config.customApps.map((appDef) => {
+    const isLink = appDef.kind === 'link' && Boolean(appDef.url);
+    return toToolStatus(
       {
         id: appDef.id,
         name: appDef.name,
@@ -100,12 +106,21 @@ function listTools() {
       config,
       {
         isCustom: true,
-        resolvedPath: appDef.exePath && pathExists(appDef.exePath) ? appDef.exePath : null,
-        source: appDef.exePath && pathExists(appDef.exePath) ? 'custom' : 'none',
-        launchable: true,
+        isLink,
+        openUrl: isLink ? appDef.url : null,
+        resolvedPath: isLink
+          ? appDef.url
+          : appDef.exePath && pathExists(appDef.exePath)
+            ? appDef.exePath
+            : null,
+        source: isLink
+          ? 'custom'
+          : appDef.exePath && pathExists(appDef.exePath)
+            ? 'custom'
+            : 'none',
       },
-    ),
-  );
+    );
+  });
   return [...catalogTools, ...customTools];
 }
 
@@ -114,7 +129,6 @@ function listRecommendations() {
   return RECOMMENDATIONS.map((item) => ({
     ...item,
     unused: config.unusedIds.includes(item.id),
-    isCustom: false,
   }));
 }
 
@@ -130,7 +144,6 @@ function findAnyToolDef(id) {
 module.exports = {
   listTools,
   listRecommendations,
-  resolveToolPath,
   pathExists,
   findAnyToolDef,
 };

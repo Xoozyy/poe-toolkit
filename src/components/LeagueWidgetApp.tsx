@@ -14,16 +14,23 @@ export function LeagueWidgetApp() {
       return;
     }
     let cancelled = false;
-    void api
-      .getLeague()
-      .then((info) => {
-        if (!cancelled) setLeague(info);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(String(err));
-      });
+
+    const load = () => {
+      void api
+        .getLeague('poe1')
+        .then((info) => {
+          if (!cancelled) setLeague(info);
+        })
+        .catch((err) => {
+          if (!cancelled) setError(String(err));
+        });
+    };
+
+    load();
+    const poll = window.setInterval(load, 60 * 1000);
     return () => {
       cancelled = true;
+      window.clearInterval(poll);
     };
   }, [api]);
 
@@ -34,15 +41,21 @@ export function LeagueWidgetApp() {
 
   const startMs = league?.startMs ?? null;
   const remaining = startMs != null ? startMs - now : 0;
-  const live = league?.live || (startMs != null && remaining <= 0);
+  const schedulePassed = startMs != null && remaining <= 0;
+  const stage = league?.stage ?? 'countdown';
+  const isLogin = stage === 'login' || (stage === 'countdown' && schedulePassed);
+  const isCurrent = stage === 'current' && !isLogin;
   const parts = useMemo(() => splitRemaining(remaining), [remaining]);
+  const copy = isLogin ? league?.loginCopy : null;
 
   function closeWidget() {
     void api?.closeLeagueWidget();
   }
 
   return (
-    <div className={`league-widget${live ? ' is-live' : ''}`}>
+    <div
+      className={`league-widget${isLogin ? ' is-live is-login' : ''}${isCurrent ? ' is-live' : ''}`}
+    >
       <div className="league-widget-chrome">
         <button
           type="button"
@@ -62,12 +75,36 @@ export function LeagueWidgetApp() {
       ) : (
         <>
           <p className="league-widget-kicker">
-            {live ? 'League live' : 'Next league'}
+            {isLogin
+              ? copy?.kicker || 'League live'
+              : isCurrent
+                ? 'Current league'
+                : 'Next league'}
           </p>
-          <h1 className="league-widget-name">{league.nextName}</h1>
-          {live ? (
-            <div className="league-widget-live">LIVE</div>
-          ) : (
+          <h1 className="league-widget-name">
+            {isLogin
+              ? copy?.headline || 'LOGIN!'
+              : isCurrent
+                ? league.currentName || league.nextName
+                : league.nextName}
+          </h1>
+          {isLogin ? (
+            <>
+              <p className="league-widget-meta">{league.nextName}</p>
+              <div className="league-widget-live">
+                {copy?.badge || 'LOGIN'}
+              </div>
+            </>
+          ) : isCurrent ? (
+            <>
+              <p className="league-widget-meta">
+                {league.nextName
+                  ? `Next: ${league.nextName}`
+                  : 'Challenge league in progress'}
+              </p>
+              <div className="league-widget-live">LIVE</div>
+            </>
+          ) : startMs != null ? (
             <div className="league-widget-clock" aria-live="polite">
               <div className="league-widget-unit">
                 <span className="league-widget-digits">{pad(parts.days)}</span>
@@ -89,6 +126,8 @@ export function LeagueWidgetApp() {
                 <span className="league-widget-label">s</span>
               </div>
             </div>
+          ) : (
+            <div className="league-widget-live">TBD</div>
           )}
         </>
       )}

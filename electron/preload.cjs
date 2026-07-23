@@ -3,12 +3,25 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('poeToolkit', {
   listTools: () => ipcRenderer.invoke('tools:list'),
   listRecommendations: () => ipcRenderer.invoke('recommendations:list'),
-  getLeague: () => ipcRenderer.invoke('league:get'),
+  getLeague: (game) => ipcRenderer.invoke('league:get', game),
   openLeagueWidget: () => ipcRenderer.invoke('league:openWidget'),
   closeLeagueWidget: () => ipcRenderer.invoke('league:closeWidget'),
   listAnnouncements: () => ipcRenderer.invoke('announcements:list'),
   markAnnouncementRead: (id) => ipcRenderer.invoke('announcements:markRead', id),
-  getCurrencyExchange: () => ipcRenderer.invoke('currency:getExchange'),
+  getCurrencyExchange: (game) => ipcRenderer.invoke('currency:getExchange', game),
+  listCurrencyLeagues: (game) =>
+    ipcRenderer.invoke('currency:listLeagues', game),
+  listCurrencyPairs: () => ipcRenderer.invoke('currency:listPairs'),
+  setCurrencyPairs: (ids) => ipcRenderer.invoke('currency:setPairs', ids),
+  setCurrencyLeague: (leagueId, game) =>
+    ipcRenderer.invoke('currency:setLeague', leagueId, game),
+  getInfoLayout: () => ipcRenderer.invoke('ui:getInfoLayout'),
+  setInfoLayout: (layout) => ipcRenderer.invoke('ui:setInfoLayout', layout),
+  getPreviewLeagueLaunch: () => ipcRenderer.invoke('ui:getPreviewLeagueLaunch'),
+  setPreviewLeagueLaunch: (enabled) =>
+    ipcRenderer.invoke('ui:setPreviewLeagueLaunch', enabled),
+  getStreamerMode: () => ipcRenderer.invoke('ui:getStreamerMode'),
+  setStreamerMode: (enabled) => ipcRenderer.invoke('ui:setStreamerMode', enabled),
   getStorageInfo: () => ipcRenderer.invoke('storage:getInfo'),
   openStorageFolder: () => ipcRenderer.invoke('storage:openFolder'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
@@ -33,5 +46,4 @@ contextBridge.exposeInMainWorld('poeToolkit', {
     ipcRenderer.on('window:maximized', listener);
     return () => ipcRenderer.removeListener('window:maximized', listener);
   },
-  platform: process.platform,
 });

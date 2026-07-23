@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
-const { DEFAULT_LEAGUE } = require('./league.cjs');
+const { DEFAULT_LEAGUE, DEFAULT_LEAGUE_POE2 } = require('./league.cjs');
+const { normalizeCurrencyPairIds } = require('./currency.cjs');
 
 const CONFIG_VERSION = 2;
 
@@ -24,6 +25,18 @@ function defaultConfig() {
       unused: [],
     },
     league: { ...DEFAULT_LEAGUE },
+    leaguePoe2: { ...DEFAULT_LEAGUE_POE2 },
+    /** poe.ninja economy league for currency exchange; null = auto-pick */
+    currencyLeague: null,
+    currencyLeaguePoe2: null,
+    /** League + announcements layout: compact strip or full stacked */
+    infoLayout: 'compact',
+    /** Force LOGIN! launch banner for testing before real go-live */
+    previewLeagueLaunch: false,
+    /** Hide paths / personal filesystem details while streaming */
+    streamerMode: false,
+    /** Enabled currency exchange pairs (multi-select) */
+    currencyPairIds: ['chaos-divine'],
   };
 }
 
@@ -40,17 +53,31 @@ function normalizeCustomApps(raw) {
   if (!Array.isArray(raw)) return [];
   return raw
     .filter((appDef) => appDef && typeof appDef === 'object' && appDef.id)
-    .map((appDef) => ({
-      id: String(appDef.id),
-      name: String(appDef.name || 'Custom app'),
-      blurb: String(appDef.blurb || 'Custom application'),
-      category:
-        appDef.category === 'poe2' || appDef.category === 'optional'
-          ? appDef.category
-          : 'poe1',
-      exePath: appDef.exePath ? String(appDef.exePath) : null,
-      downloadUrl: appDef.downloadUrl ? String(appDef.downloadUrl) : null,
-    }));
+    .map((appDef) => {
+      const url =
+        typeof appDef.url === 'string' && /^https?:\/\//i.test(appDef.url.trim())
+          ? appDef.url.trim()
+          : null;
+      const kind = appDef.kind === 'link' || url ? 'link' : 'app';
+      return {
+        id: String(appDef.id),
+        name: String(appDef.name || (kind === 'link' ? 'Web link' : 'Custom app')),
+        blurb: String(
+          appDef.blurb ||
+            (kind === 'link' ? 'Website shortcut' : 'Custom application'),
+        ),
+        category:
+          appDef.category === 'poe2' || appDef.category === 'optional'
+            ? appDef.category
+            : 'poe1',
+        kind,
+        exePath:
+          kind === 'app' && appDef.exePath ? String(appDef.exePath) : null,
+        url: kind === 'link' ? url : null,
+        downloadUrl: appDef.downloadUrl ? String(appDef.downloadUrl) : null,
+      };
+    })
+    .filter((appDef) => (appDef.kind === 'link' ? Boolean(appDef.url) : true));
 }
 
 function readConfig() {
@@ -76,6 +103,24 @@ function readConfig() {
           ? parsed.league
           : {}),
       },
+      leaguePoe2: {
+        ...DEFAULT_LEAGUE_POE2,
+        ...(parsed.leaguePoe2 && typeof parsed.leaguePoe2 === 'object'
+          ? parsed.leaguePoe2
+          : {}),
+      },
+      currencyLeague:
+        parsed.currencyLeague == null || parsed.currencyLeague === ''
+          ? null
+          : String(parsed.currencyLeague),
+      currencyLeaguePoe2:
+        parsed.currencyLeaguePoe2 == null || parsed.currencyLeaguePoe2 === ''
+          ? null
+          : String(parsed.currencyLeaguePoe2),
+      infoLayout: parsed.infoLayout === 'normal' ? 'normal' : 'compact',
+      previewLeagueLaunch: Boolean(parsed.previewLeagueLaunch),
+      streamerMode: Boolean(parsed.streamerMode),
+      currencyPairIds: normalizeCurrencyPairIds(parsed.currencyPairIds),
     };
   } catch {
     return defaultConfig();
@@ -135,16 +180,27 @@ function setUnused(id, unused) {
   return config;
 }
 
-function addCustomApp({ name, category, exePath, blurb, downloadUrl }) {
+function addCustomApp({ name, category, exePath, blurb, downloadUrl, url, kind }) {
   const config = readConfig();
   const id = `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const isLink =
+    kind === 'link' ||
+    (typeof url === 'string' && /^https?:\/\//i.test(url.trim()));
+  const linkUrl = isLink && typeof url === 'string' ? url.trim() : null;
   const appDef = {
     id,
-    name: String(name || path.basename(exePath || 'Custom app', '.exe')),
-    blurb: String(blurb || 'Custom application'),
+    name: String(
+      name ||
+        (isLink
+          ? 'Web link'
+          : path.basename(exePath || 'Custom app', '.exe')),
+    ),
+    blurb: String(blurb || (isLink ? 'Website shortcut' : 'Custom application')),
     category:
       category === 'poe2' || category === 'optional' ? category : 'poe1',
-    exePath: exePath ? String(exePath) : null,
+    kind: isLink ? 'link' : 'app',
+    exePath: !isLink && exePath ? String(exePath) : null,
+    url: linkUrl,
     downloadUrl: downloadUrl ? String(downloadUrl) : null,
   };
   config.customApps.push(appDef);
@@ -164,8 +220,71 @@ function removeCustomApp(id) {
   return config;
 }
 
-function getLeague() {
-  return readConfig().league;
+function getLeague(game = 'poe1') {
+  const config = readConfig();
+  return game === 'poe2' ? config.leaguePoe2 : config.league;
+}
+
+function getCurrencyLeague(game = 'poe1') {
+  const config = readConfig();
+  return game === 'poe2' ? config.currencyLeaguePoe2 : config.currencyLeague;
+}
+
+function setCurrencyLeague(league, game = 'poe1') {
+  const config = readConfig();
+  const value = league == null || league === '' ? null : String(league);
+  if (game === 'poe2') {
+    config.currencyLeaguePoe2 = value;
+    writeConfig(config);
+    return config.currencyLeaguePoe2;
+  }
+  config.currencyLeague = value;
+  writeConfig(config);
+  return config.currencyLeague;
+}
+
+function getInfoLayout() {
+  return readConfig().infoLayout === 'normal' ? 'normal' : 'compact';
+}
+
+function setInfoLayout(layout) {
+  const config = readConfig();
+  config.infoLayout = layout === 'normal' ? 'normal' : 'compact';
+  writeConfig(config);
+  return config.infoLayout;
+}
+
+function getPreviewLeagueLaunch() {
+  return Boolean(readConfig().previewLeagueLaunch);
+}
+
+function setPreviewLeagueLaunch(enabled) {
+  const config = readConfig();
+  config.previewLeagueLaunch = Boolean(enabled);
+  writeConfig(config);
+  return config.previewLeagueLaunch;
+}
+
+function getStreamerMode() {
+  return Boolean(readConfig().streamerMode);
+}
+
+function setStreamerMode(enabled) {
+  const config = readConfig();
+  config.streamerMode = Boolean(enabled);
+  writeConfig(config);
+  return config.streamerMode;
+}
+
+function getCurrencyPairIds() {
+  return normalizeCurrencyPairIds(readConfig().currencyPairIds);
+}
+
+function setCurrencyPairIds(ids) {
+  const config = readConfig();
+  config.currencyPairIds = normalizeCurrencyPairIds(ids);
+  writeConfig(config);
+  return config.currencyPairIds;
 }
 
 function markAnnouncementRead(id) {
@@ -197,7 +316,6 @@ function setToolOrder(page, ids) {
 
 module.exports = {
   readConfig,
-  writeConfig,
   setCustomPath,
   dismissDownload,
   resetDismissed,
@@ -205,6 +323,16 @@ module.exports = {
   addCustomApp,
   removeCustomApp,
   getLeague,
+  getCurrencyLeague,
+  setCurrencyLeague,
+  getInfoLayout,
+  setInfoLayout,
+  getPreviewLeagueLaunch,
+  setPreviewLeagueLaunch,
+  getStreamerMode,
+  setStreamerMode,
+  getCurrencyPairIds,
+  setCurrencyPairIds,
   markAnnouncementRead,
   getReadAnnouncementIds,
   getToolOrders,

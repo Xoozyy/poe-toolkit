@@ -14,10 +14,10 @@ export interface ToolStatus {
   ready: boolean;
   customPath: string | null;
   showDownloadPrompt: boolean;
-  downloadDismissed: boolean;
   unused: boolean;
   isCustom: boolean;
-  launchable: boolean;
+  isLink?: boolean;
+  openUrl?: string | null;
 }
 
 export interface Recommendation {
@@ -26,52 +26,84 @@ export interface Recommendation {
   summary: string;
   downloadUrl: string;
   unused: boolean;
-  isCustom: boolean;
+}
+
+export interface LeagueLoginCopy {
+  kicker: string;
+  headline: string;
+  meta: string;
+  badge: string;
 }
 
 export interface LeagueInfo {
   nextName: string;
-  nextStartUtc: string;
-  currentName: string;
-  announcementUrl: string | null;
-  live: boolean;
+  currentName: string | null;
   startMs: number | null;
+  /** Content funnel stage */
+  stage: 'countdown' | 'login' | 'current';
+  game?: 'poe1' | 'poe2';
+  launchReason?: 'schedule' | 'poe.ninja' | 'preview' | null;
+  loginCopy?: LeagueLoginCopy | null;
 }
 
 export interface AnnouncementItem {
   id: string;
-  threadId: string | null;
   title: string;
   poster: string;
   time: string | null;
-  forum: string;
   url: string;
   excerpt: string;
-  read?: boolean;
 }
 
 export interface AnnouncementsResult {
   ok: boolean;
   items: AnnouncementItem[];
   error?: string;
-  fetchedAt?: string;
   highlightId?: string | null;
+}
+
+export interface CurrencyPairRate {
+  id: string;
+  label: string;
+  leftId: string;
+  rightId: string;
+  leftLabel: string;
+  rightLabel: string;
+  rate: number | null;
+  error?: string;
+}
+
+export interface CurrencyPairOption {
+  id: string;
+  label: string;
 }
 
 export interface CurrencyExchangeRate {
   ok: boolean;
+  game?: 'poe1' | 'poe2';
   league: string;
-  chaosPerDivine: number | null;
-  chaosIconUrl?: string | null;
-  divineIconUrl?: string | null;
+  pageUrl?: string;
+  rates?: CurrencyPairRate[];
   fetchedAt?: string;
+  error?: string;
+}
+
+export interface EconomyLeague {
+  id: string;
+  name: string;
+  url?: string;
+}
+
+export interface CurrencyLeaguesResult {
+  ok: boolean;
+  game?: 'poe1' | 'poe2';
+  league: string;
+  leagues: EconomyLeague[];
   error?: string;
 }
 
 export interface StorageInfo {
   configPath: string;
-  userDataPath: string;
-  packaged: boolean;
 }
 
 export interface ToolsBundle {
@@ -86,15 +118,56 @@ export type OrderPage = 'poe1' | 'poe2' | 'optional' | 'unused';
 
 export type ToolOrders = Record<OrderPage, string[]>;
 
+export type InfoLayout = 'compact' | 'normal';
+
 export interface PoeToolkitApi {
   listTools: () => Promise<ToolStatus[]>;
   listRecommendations: () => Promise<Recommendation[]>;
-  getLeague: () => Promise<LeagueInfo>;
+  getLeague: (game?: 'poe1' | 'poe2') => Promise<LeagueInfo>;
   openLeagueWidget: () => Promise<{ ok: boolean }>;
   closeLeagueWidget: () => Promise<{ ok: boolean }>;
   listAnnouncements: () => Promise<AnnouncementsResult>;
   markAnnouncementRead: (id: string) => Promise<{ ok: boolean }>;
-  getCurrencyExchange: () => Promise<CurrencyExchangeRate>;
+  getCurrencyExchange: (game?: 'poe1' | 'poe2') => Promise<CurrencyExchangeRate>;
+  listCurrencyLeagues: (game?: 'poe1' | 'poe2') => Promise<CurrencyLeaguesResult>;
+  listCurrencyPairs: () => Promise<{
+    ok: boolean;
+    pairs: CurrencyPairOption[];
+    selectedIds: string[];
+  }>;
+  setCurrencyPairs: (
+    ids: string[],
+  ) => Promise<{
+    ok: boolean;
+    selectedIds: string[];
+    pairs: CurrencyPairOption[];
+    ratePoe1?: CurrencyExchangeRate;
+    ratePoe2?: CurrencyExchangeRate;
+    error?: string;
+  }>;
+  setCurrencyLeague: (
+    leagueId: string,
+    game?: 'poe1' | 'poe2',
+  ) => Promise<{
+    ok: boolean;
+    game?: 'poe1' | 'poe2';
+    league?: string;
+    leagues?: EconomyLeague[];
+    rate?: CurrencyExchangeRate;
+    error?: string;
+  }>;
+  getInfoLayout: () => Promise<InfoLayout>;
+  setInfoLayout: (
+    layout: InfoLayout,
+  ) => Promise<{ ok: boolean; infoLayout: InfoLayout }>;
+  getPreviewLeagueLaunch: () => Promise<boolean>;
+  setPreviewLeagueLaunch: (
+    enabled: boolean,
+  ) => Promise<{ ok: boolean; previewLeagueLaunch: boolean }>;
+  getStreamerMode: () => Promise<boolean>;
+  setStreamerMode: (
+    enabled: boolean,
+  ) => Promise<{ ok: boolean; streamerMode: boolean }>;
   getStorageInfo: () => Promise<StorageInfo>;
   openStorageFolder: () => Promise<{ ok: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -110,8 +183,10 @@ export interface PoeToolkitApi {
   setUnused: (id: string, unused: boolean) => Promise<ToolsBundle>;
   addCustom: (payload: {
     category: ToolCategory;
+    kind?: 'app' | 'link';
     name?: string;
     exePath?: string;
+    url?: string;
     blurb?: string;
     downloadUrl?: string;
   }) => Promise<ToolsBundle>;
@@ -123,7 +198,6 @@ export interface PoeToolkitApi {
   windowClose: () => Promise<void>;
   windowIsMaximized: () => Promise<boolean>;
   onWindowMaximized: (cb: (maximized: boolean) => void) => () => void;
-  platform: string;
 }
 
 declare global {

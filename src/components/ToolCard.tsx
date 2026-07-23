@@ -1,10 +1,12 @@
 import type { ToolStatus } from '../types';
+import { obscureSensitive } from '../lib/streamer';
 import type { SortableBind } from './SortableGrid';
 
 interface ToolCardProps {
   tool: ToolStatus;
   busy: boolean;
   mode?: 'active' | 'unused';
+  streamerMode?: boolean;
   sortable?: SortableBind;
   onLaunch: () => void;
   onPick: () => void;
@@ -17,6 +19,7 @@ interface ToolCardProps {
 }
 
 function statusLabel(tool: ToolStatus): string {
+  if (tool.isLink) return 'Website';
   if (tool.ready) {
     return tool.source === 'custom' || tool.isCustom ? 'Custom path' : 'Ready';
   }
@@ -27,6 +30,7 @@ export function ToolCard({
   tool,
   busy,
   mode = 'active',
+  streamerMode = false,
   sortable,
   onLaunch,
   onPick,
@@ -38,6 +42,17 @@ export function ToolCard({
   onRemoveCustom,
 }: ToolCardProps) {
   const unused = mode === 'unused';
+  const isLink = Boolean(tool.isLink);
+  const rawPath =
+    tool.resolvedPath ??
+    (isLink ? 'No website URL set' : 'No executable path set');
+  const hasRealPath = Boolean(tool.resolvedPath);
+  const displayPath =
+    streamerMode && hasRealPath
+      ? obscureSensitive(tool.resolvedPath, isLink ? 'url' : 'path')
+      : rawPath;
+  const pathTitle =
+    streamerMode || !hasRealPath ? undefined : tool.resolvedPath ?? undefined;
 
   return (
     <article
@@ -66,12 +81,12 @@ export function ToolCard({
 
       <p className="tool-blurb">
         {tool.blurb}
-        {tool.isCustom ? ' · Custom' : ''}
+        {tool.isCustom ? (isLink ? ' · Link' : ' · Custom') : ''}
         {unused ? ` · From ${tool.categoryLabel}` : ''}
       </p>
 
-      <p className="tool-path" title={tool.resolvedPath ?? undefined}>
-        {tool.resolvedPath ?? 'No executable path set'}
+      <p className="tool-path" title={pathTitle}>
+        {displayPath}
       </p>
 
       {unused ? (
@@ -102,17 +117,19 @@ export function ToolCard({
               onClick={onLaunch}
               disabled={!tool.ready || busy}
             >
-              {busy ? 'Working…' : 'Launch'}
+              {busy ? 'Working…' : isLink ? 'Open' : 'Launch'}
             </button>
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onPick}
-              disabled={busy}
-            >
-              Set path
-            </button>
-            {(tool.customPath || tool.isCustom) && tool.customPath && (
+            {!isLink && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={onPick}
+                disabled={busy}
+              >
+                Set path
+              </button>
+            )}
+            {!isLink && (tool.customPath || tool.isCustom) && tool.customPath && (
               <button
                 type="button"
                 className="btn btn-ghost"
