@@ -2,7 +2,7 @@
 
 Desktop hub for PoE1 and PoE2: launch games and companions, add your own apps or links, track league launch and announcements, and show currency rates.
 
-<img width="1592" height="1130" alt="image" src="https://github.com/user-attachments/assets/9e9fc8fe-37ec-44bd-a810-af81763e9d2f" />
+<img width="1971" height="1193" alt="image" src="https://github.com/user-attachments/assets/e413f0cc-e48b-45b9-bcb8-d70dfdc9653c" />
 
 ## Features
 
