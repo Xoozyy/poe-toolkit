@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('poeToolkit', {
   closeLeagueWidget: () => ipcRenderer.invoke('league:closeWidget'),
   listAnnouncements: () => ipcRenderer.invoke('announcements:list'),
   markAnnouncementRead: (id) => ipcRenderer.invoke('announcements:markRead', id),
+  getCurrencyExchange: () => ipcRenderer.invoke('currency:getExchange'),
   getStorageInfo: () => ipcRenderer.invoke('storage:getInfo'),
   openStorageFolder: () => ipcRenderer.invoke('storage:openFolder'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),

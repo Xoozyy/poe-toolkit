@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   AnnouncementsResult,
+  CurrencyExchangeRate,
   LeagueInfo,
   OrderPage,
   Recommendation,
@@ -13,6 +14,7 @@ import { ToolCard } from './components/ToolCard';
 import { RecommendationCard } from './components/RecommendationCard';
 import { LeagueCountdown } from './components/LeagueCountdown';
 import { AnnouncementsFeed } from './components/AnnouncementsFeed';
+import { CurrencyExchange } from './components/CurrencyExchange';
 import { TitleBar, useWindowChrome } from './components/TitleBar';
 import { SortableGrid } from './components/SortableGrid';
 import './App.css';
@@ -85,6 +87,8 @@ export default function App() {
   const [announcements, setAnnouncements] =
     useState<AnnouncementsResult | null>(null);
   const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+  const [currency, setCurrency] = useState<CurrencyExchangeRate | null>(null);
+  const [currencyLoading, setCurrencyLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -121,6 +125,23 @@ export default function App() {
     }
   }, [api]);
 
+  const refreshCurrency = useCallback(async () => {
+    if (!api) return;
+    setCurrencyLoading(true);
+    try {
+      setCurrency(await api.getCurrencyExchange());
+    } catch (err) {
+      setCurrency({
+        ok: false,
+        league: 'Standard',
+        chaosPerDivine: null,
+        error: String(err),
+      });
+    } finally {
+      setCurrencyLoading(false);
+    }
+  }, [api]);
+
   const refresh = useCallback(async () => {
     if (!api) {
       setLoading(false);
@@ -139,12 +160,13 @@ export default function App() {
       setLeague(leagueInfo);
       setOrders(toolOrders);
       void refreshAnnouncements();
+      void refreshCurrency();
     } catch (err) {
       showToast(String(err));
     } finally {
       setLoading(false);
     }
-  }, [api, showToast, refreshAnnouncements]);
+  }, [api, showToast, refreshAnnouncements, refreshCurrency]);
 
   useEffect(() => {
     void refresh();
@@ -154,9 +176,10 @@ export default function App() {
     if (!api) return;
     const id = window.setInterval(() => {
       void refreshAnnouncements();
+      void refreshCurrency();
     }, 15 * 60 * 1000);
     return () => window.clearInterval(id);
-  }, [api, refreshAnnouncements]);
+  }, [api, refreshAnnouncements, refreshCurrency]);
 
   useEffect(() => {
     if (!api || !settingsOpen) return;
@@ -412,6 +435,9 @@ export default function App() {
                     })();
                   }}
                 />
+              )}
+              {page === 'poe1' && (
+                <CurrencyExchange data={currency} loading={currencyLoading} />
               )}
               {loading && pageEntries.length === 0 ? (
                 <p className="muted">Scanning for installations…</p>
