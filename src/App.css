@@ -327,6 +327,9 @@
     linear-gradient(180deg, rgba(28, 32, 40, 0.98) 0%, rgba(14, 16, 20, 0.98) 100%);
   box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.45);
   animation: settings-slide-up 200ms ease-out;
+  max-height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .settings-sheet-handle {
