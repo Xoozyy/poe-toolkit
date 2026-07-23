@@ -28,6 +28,7 @@ const {
 } = require('./config.cjs');
 const { getLeagueInfo } = require('./league.cjs');
 const { fetchAnnouncements } = require('./announcements.cjs');
+const { fetchCurrencyExchange } = require('./currency.cjs');
 
 const isDev = !app.isPackaged;
 
@@ -88,6 +89,7 @@ function registerIpc() {
   ipcMain.handle('recommendations:list', () => listRecommendations());
   ipcMain.handle('league:get', () => getLeagueInfo(getLeague()));
   ipcMain.handle('announcements:list', () => fetchAnnouncements(2));
+  ipcMain.handle('currency:getExchange', () => fetchCurrencyExchange('Standard'));
   ipcMain.handle('storage:getInfo', () => ({
     configPath: configPath(),
     userDataPath: app.getPath('userData'),

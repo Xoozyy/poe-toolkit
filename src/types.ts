@@ -56,6 +56,16 @@ export interface AnnouncementsResult {
   fetchedAt?: string;
 }
 
+export interface CurrencyExchangeRate {
+  ok: boolean;
+  league: string;
+  chaosPerDivine: number | null;
+  chaosIconUrl?: string | null;
+  divineIconUrl?: string | null;
+  fetchedAt?: string;
+  error?: string;
+}
+
 export interface StorageInfo {
   configPath: string;
   userDataPath: string;
@@ -75,6 +85,7 @@ export interface PoeToolkitApi {
   listRecommendations: () => Promise<Recommendation[]>;
   getLeague: () => Promise<LeagueInfo>;
   listAnnouncements: () => Promise<AnnouncementsResult>;
+  getCurrencyExchange: () => Promise<CurrencyExchangeRate>;
   getStorageInfo: () => Promise<StorageInfo>;
   openStorageFolder: () => Promise<{ ok: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
