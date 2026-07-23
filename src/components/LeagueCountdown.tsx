@@ -1,24 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { LeagueInfo } from '../types';
+import { pad, splitRemaining } from '../lib/countdown';
 
 interface Props {
   league: LeagueInfo | null;
+  onOpenWidget?: () => void;
 }
 
-function pad(n: number) {
-  return String(Math.max(0, n)).padStart(2, '0');
-}
-
-function splitRemaining(ms: number) {
-  const totalSec = Math.max(0, Math.floor(ms / 1000));
-  const days = Math.floor(totalSec / 86400);
-  const hours = Math.floor((totalSec % 86400) / 3600);
-  const minutes = Math.floor((totalSec % 3600) / 60);
-  const seconds = totalSec % 60;
-  return { days, hours, minutes, seconds };
-}
-
-export function LeagueCountdown({ league }: Props) {
+export function LeagueCountdown({ league, onOpenWidget }: Props) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -46,10 +35,16 @@ export function LeagueCountdown({ league }: Props) {
   if (!league) return null;
 
   return (
-    <section className={`league-banner${live ? ' is-live' : ''}`}>
+    <button
+      type="button"
+      className={`league-banner${live ? ' is-live' : ''}${onOpenWidget ? ' is-clickable' : ''}`}
+      onClick={onOpenWidget}
+      title={onOpenWidget ? 'Open desktop countdown widget' : undefined}
+    >
       <div className="league-banner-copy">
         <p className="league-kicker">
           {live ? 'League live' : 'Next league'}
+          {onOpenWidget ? ' · Click for widget' : ''}
         </p>
         <h2 className="league-name">{league.nextName}</h2>
         <p className="league-meta">
@@ -89,6 +84,6 @@ export function LeagueCountdown({ league }: Props) {
           </div>
         </div>
       )}
-    </section>
+    </button>
   );
 }

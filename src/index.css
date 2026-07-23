@@ -11,6 +11,10 @@
   --ok: #5a9e72;
   --danger: #c46a5a;
   --font: 'Segoe UI', 'Trebuchet MS', sans-serif;
+  /* Layout */
+  --sidebar-width: 11.5rem;
+  --layout-content-max: 56rem;
+  --card-min: 15.5rem;
   color: var(--text);
   background: var(--bg-deep);
   font-family: var(--font);

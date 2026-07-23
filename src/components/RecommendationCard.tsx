@@ -1,8 +1,10 @@
 import type { Recommendation } from '../types';
+import type { SortableBind } from './SortableGrid';
 
 interface Props {
   item: Recommendation;
   mode?: 'active' | 'unused';
+  sortable?: SortableBind;
   onDownload: () => void;
   onHide: () => void;
   onRestore: () => void;
@@ -11,6 +13,7 @@ interface Props {
 export function RecommendationCard({
   item,
   mode = 'active',
+  sortable,
   onDownload,
   onHide,
   onRestore,
@@ -18,7 +21,7 @@ export function RecommendationCard({
   const unused = mode === 'unused';
 
   return (
-    <article className={`rec-card${unused ? ' is-unused' : ''}`}>
+    <article className={`rec-card${unused ? ' is-unused' : ''}${sortable ? ' is-sortable' : ''}`}>
       {!unused && (
         <button
           type="button"

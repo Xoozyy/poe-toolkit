@@ -47,6 +47,7 @@ export interface AnnouncementItem {
   forum: string;
   url: string;
   excerpt: string;
+  read?: boolean;
 }
 
 export interface AnnouncementsResult {
@@ -54,6 +55,7 @@ export interface AnnouncementsResult {
   items: AnnouncementItem[];
   error?: string;
   fetchedAt?: string;
+  highlightId?: string | null;
 }
 
 export interface StorageInfo {
@@ -70,11 +72,18 @@ export interface ToolsBundle {
   canceled?: boolean;
 }
 
+export type OrderPage = 'poe1' | 'poe2' | 'optional' | 'unused';
+
+export type ToolOrders = Record<OrderPage, string[]>;
+
 export interface PoeToolkitApi {
   listTools: () => Promise<ToolStatus[]>;
   listRecommendations: () => Promise<Recommendation[]>;
   getLeague: () => Promise<LeagueInfo>;
+  openLeagueWidget: () => Promise<{ ok: boolean }>;
+  closeLeagueWidget: () => Promise<{ ok: boolean }>;
   listAnnouncements: () => Promise<AnnouncementsResult>;
+  markAnnouncementRead: (id: string) => Promise<{ ok: boolean }>;
   getStorageInfo: () => Promise<StorageInfo>;
   openStorageFolder: () => Promise<{ ok: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -96,6 +105,13 @@ export interface PoeToolkitApi {
     downloadUrl?: string;
   }) => Promise<ToolsBundle>;
   removeCustom: (id: string) => Promise<ToolsBundle>;
+  getToolOrders: () => Promise<ToolOrders>;
+  setToolOrder: (page: OrderPage, ids: string[]) => Promise<ToolOrders>;
+  windowMinimize: () => Promise<void>;
+  windowMaximize: () => Promise<void>;
+  windowClose: () => Promise<void>;
+  windowIsMaximized: () => Promise<boolean>;
+  onWindowMaximized: (cb: (maximized: boolean) => void) => () => void;
   platform: string;
 }
 

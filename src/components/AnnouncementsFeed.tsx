@@ -3,7 +3,7 @@ import type { AnnouncementItem, AnnouncementsResult } from '../types';
 interface Props {
   feed: AnnouncementsResult | null;
   loading?: boolean;
-  onOpen: (url: string) => void;
+  onOpen: (item: AnnouncementItem) => void;
   onRefresh: () => void;
 }
 
@@ -21,26 +21,31 @@ function formatWhen(iso: string | null) {
 
 function AnnouncementRow({
   item,
+  highlight,
   onOpen,
 }: {
   item: AnnouncementItem;
-  onOpen: (url: string) => void;
+  highlight: boolean;
+  onOpen: (item: AnnouncementItem) => void;
 }) {
   const when = formatWhen(item.time);
   return (
     <button
       type="button"
-      className="announce-item"
-      onClick={() => onOpen(item.url)}
+      className={`announce-item${highlight ? ' is-unread-latest' : ''}`}
+      onClick={() => onOpen(item)}
     >
-      <div className="announce-item-top">
-        <span className="announce-title">{item.title}</span>
-        {when ? <span className="announce-when">{when}</span> : null}
+      {highlight ? <span className="announce-unread-ring" aria-hidden /> : null}
+      <div className="announce-item-inner">
+        <div className="announce-item-top">
+          <span className="announce-title">{item.title}</span>
+          {when ? <span className="announce-when">{when}</span> : null}
+        </div>
+        <p className="announce-meta">
+          {item.poster}
+          {item.excerpt ? ` · ${item.excerpt}` : ''}
+        </p>
       </div>
-      <p className="announce-meta">
-        {item.poster}
-        {item.excerpt ? ` · ${item.excerpt}` : ''}
-      </p>
     </button>
   );
 }
@@ -53,6 +58,7 @@ export function AnnouncementsFeed({
 }: Props) {
   const items = feed?.items ?? [];
   const error = feed && !feed.ok ? feed.error : null;
+  const highlightId = feed?.highlightId ?? null;
 
   return (
     <section className="announce-panel">
@@ -80,7 +86,12 @@ export function AnnouncementsFeed({
       ) : (
         <div className="announce-list">
           {items.map((item) => (
-            <AnnouncementRow key={item.id} item={item} onOpen={onOpen} />
+            <AnnouncementRow
+              key={item.id}
+              item={item}
+              highlight={highlightId === item.id}
+              onOpen={onOpen}
+            />
           ))}
         </div>
       )}

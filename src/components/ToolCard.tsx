@@ -1,9 +1,11 @@
 import type { ToolStatus } from '../types';
+import type { SortableBind } from './SortableGrid';
 
 interface ToolCardProps {
   tool: ToolStatus;
   busy: boolean;
   mode?: 'active' | 'unused';
+  sortable?: SortableBind;
   onLaunch: () => void;
   onPick: () => void;
   onClear: () => void;
@@ -25,6 +27,7 @@ export function ToolCard({
   tool,
   busy,
   mode = 'active',
+  sortable,
   onLaunch,
   onPick,
   onClear,
@@ -38,7 +41,7 @@ export function ToolCard({
 
   return (
     <article
-      className={`tool-card${tool.ready ? ' is-ready' : ''}${unused ? ' is-unused' : ''}`}
+      className={`tool-card${tool.ready ? ' is-ready' : ''}${unused ? ' is-unused' : ''}${sortable ? ' is-sortable' : ''}`}
     >
       {!unused && (
         <button

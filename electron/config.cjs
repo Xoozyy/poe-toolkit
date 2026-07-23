@@ -16,8 +16,24 @@ function defaultConfig() {
     dismissedDownloads: [],
     unusedIds: [],
     customApps: [],
+    readAnnouncementIds: [],
+    toolOrders: {
+      poe1: [],
+      poe2: [],
+      optional: [],
+      unused: [],
+    },
     league: { ...DEFAULT_LEAGUE },
   };
+}
+
+function normalizeToolOrders(raw) {
+  const empty = { poe1: [], poe2: [], optional: [], unused: [] };
+  if (!raw || typeof raw !== 'object') return empty;
+  for (const key of Object.keys(empty)) {
+    empty[key] = Array.isArray(raw[key]) ? raw[key].map(String) : [];
+  }
+  return empty;
 }
 
 function normalizeCustomApps(raw) {
@@ -50,6 +66,10 @@ function readConfig() {
         : [],
       unusedIds: Array.isArray(parsed.unusedIds) ? parsed.unusedIds.map(String) : [],
       customApps: normalizeCustomApps(parsed.customApps),
+      readAnnouncementIds: Array.isArray(parsed.readAnnouncementIds)
+        ? parsed.readAnnouncementIds.map(String)
+        : [],
+      toolOrders: normalizeToolOrders(parsed.toolOrders),
       league: {
         ...DEFAULT_LEAGUE,
         ...(parsed.league && typeof parsed.league === 'object'
@@ -148,6 +168,33 @@ function getLeague() {
   return readConfig().league;
 }
 
+function markAnnouncementRead(id) {
+  const sid = String(id);
+  const config = readConfig();
+  if (!config.readAnnouncementIds.includes(sid)) {
+    config.readAnnouncementIds = [sid, ...config.readAnnouncementIds].slice(0, 80);
+    writeConfig(config);
+  }
+  return config;
+}
+
+function getReadAnnouncementIds() {
+  return readConfig().readAnnouncementIds;
+}
+
+function getToolOrders() {
+  return readConfig().toolOrders;
+}
+
+function setToolOrder(page, ids) {
+  const config = readConfig();
+  const key =
+    page === 'poe2' || page === 'optional' || page === 'unused' ? page : 'poe1';
+  config.toolOrders[key] = Array.isArray(ids) ? ids.map(String) : [];
+  writeConfig(config);
+  return config.toolOrders;
+}
+
 module.exports = {
   readConfig,
   writeConfig,
@@ -158,5 +205,9 @@ module.exports = {
   addCustomApp,
   removeCustomApp,
   getLeague,
+  markAnnouncementRead,
+  getReadAnnouncementIds,
+  getToolOrders,
+  setToolOrder,
   configPath,
 };

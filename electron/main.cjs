@@ -25,19 +25,40 @@ const {
   setUnused,
   addCustomApp,
   removeCustomApp,
+  markAnnouncementRead,
+  getReadAnnouncementIds,
+  getToolOrders,
+  setToolOrder,
 } = require('./config.cjs');
 const { getLeagueInfo } = require('./league.cjs');
 const { fetchAnnouncements } = require('./announcements.cjs');
 
 const isDev = !app.isPackaged;
 
+/** @type {BrowserWindow | null} */
+let mainWindow = null;
+/** @type {BrowserWindow | null} */
+let leagueWidget = null;
+
+function loadRenderer(win, page) {
+  if (isDev) {
+    const base = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
+    win.loadURL(page === 'widget' ? `${base}/widget.html` : base);
+  } else if (page === 'widget') {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'widget.html'));
+  } else {
+    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  }
+}
+
 function createWindow() {
-  const win = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 960,
     minWidth: 1100,
     minHeight: 820,
     title: 'PoE Toolkit',
+    frame: false,
     autoHideMenuBar: true,
     show: false,
     backgroundColor: '#0c1014',
@@ -49,18 +70,69 @@ function createWindow() {
     },
   });
 
-  win.once('ready-to-show', () => win.show());
+  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  const sendMaximized = () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send('window:maximized', mainWindow.isMaximized());
+  };
+  mainWindow.on('maximize', sendMaximized);
+  mainWindow.on('unmaximize', sendMaximized);
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
   });
 
-  if (isDev) {
-    win.loadURL(process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173');
-  } else {
-    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  loadRenderer(mainWindow, 'main');
+}
+
+function createLeagueWidget() {
+  if (leagueWidget && !leagueWidget.isDestroyed()) {
+    leagueWidget.show();
+    leagueWidget.focus();
+    return leagueWidget;
   }
+
+  leagueWidget = new BrowserWindow({
+    width: 320,
+    height: 118,
+    minWidth: 280,
+    minHeight: 100,
+    maxWidth: 480,
+    maxHeight: 180,
+    title: 'League Countdown',
+    frame: false,
+    transparent: false,
+    resizable: true,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    autoHideMenuBar: true,
+    show: false,
+    backgroundColor: '#0c1014',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  leagueWidget.setAlwaysOnTop(true, 'floating');
+  leagueWidget.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  leagueWidget.once('ready-to-show', () => {
+    if (leagueWidget && !leagueWidget.isDestroyed()) leagueWidget.show();
+  });
+  leagueWidget.on('closed', () => {
+    leagueWidget = null;
+  });
+
+  loadRenderer(leagueWidget, 'widget');
+  return leagueWidget;
 }
 
 function findCatalogTool(id) {
@@ -83,11 +155,51 @@ async function pickExeDialog(event, title) {
 }
 
 function registerIpc() {
+  ipcMain.handle('window:minimize', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle('window:maximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  });
+  ipcMain.handle('window:close', (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+  ipcMain.handle('window:isMaximized', (event) => {
+    return Boolean(BrowserWindow.fromWebContents(event.sender)?.isMaximized());
+  });
+
   ipcMain.handle('tools:list', () => listTools());
   ipcMain.handle('tools:rescan', () => listTools());
   ipcMain.handle('recommendations:list', () => listRecommendations());
   ipcMain.handle('league:get', () => getLeagueInfo(getLeague()));
-  ipcMain.handle('announcements:list', () => fetchAnnouncements(2));
+  ipcMain.handle('league:openWidget', () => {
+    createLeagueWidget();
+    return { ok: true };
+  });
+  ipcMain.handle('league:closeWidget', () => {
+    if (leagueWidget && !leagueWidget.isDestroyed()) {
+      leagueWidget.close();
+    }
+    return { ok: true };
+  });
+  ipcMain.handle('announcements:list', async () => {
+    const result = await fetchAnnouncements(2);
+    const readIds = new Set(getReadAnnouncementIds());
+    const items = (result.items || []).map((item) => ({
+      ...item,
+      read: readIds.has(String(item.id)),
+    }));
+    const highlightId = items.find((item) => !item.read)?.id ?? null;
+    return { ...result, items, highlightId };
+  });
+  ipcMain.handle('announcements:markRead', (_event, id) => {
+    if (id == null) return { ok: false };
+    markAnnouncementRead(id);
+    return { ok: true };
+  });
   ipcMain.handle('storage:getInfo', () => ({
     configPath: configPath(),
     userDataPath: app.getPath('userData'),
@@ -228,6 +340,11 @@ function registerIpc() {
       tools: listTools(),
       recommendations: listRecommendations(),
     };
+  });
+
+  ipcMain.handle('tools:getOrders', () => getToolOrders());
+  ipcMain.handle('tools:setOrder', (_event, page, ids) => {
+    return setToolOrder(page, ids);
   });
 }
 

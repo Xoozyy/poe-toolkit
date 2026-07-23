@@ -2,18 +2,29 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   AnnouncementsResult,
   LeagueInfo,
+  OrderPage,
   Recommendation,
   StorageInfo,
   ToolCategory,
+  ToolOrders,
   ToolStatus,
 } from './types';
 import { ToolCard } from './components/ToolCard';
 import { RecommendationCard } from './components/RecommendationCard';
 import { LeagueCountdown } from './components/LeagueCountdown';
 import { AnnouncementsFeed } from './components/AnnouncementsFeed';
+import { TitleBar, useWindowChrome } from './components/TitleBar';
+import { SortableGrid } from './components/SortableGrid';
 import './App.css';
 
-type Page = 'poe1' | 'poe2' | 'optional' | 'unused';
+type Page = OrderPage;
+
+const EMPTY_ORDERS: ToolOrders = {
+  poe1: [],
+  poe2: [],
+  optional: [],
+  unused: [],
+};
 
 const PAGE_COPY: Record<
   Page,
@@ -32,7 +43,7 @@ const PAGE_COPY: Record<
   optional: {
     nav: 'Optional',
     title: 'Optional tools',
-    lede: 'Not launched from here by default - summaries, downloads, or your own apps.',
+    lede: 'Not launched from here by default summaries, downloads, or your own apps.',
   },
   unused: {
     nav: 'Not in use',
@@ -50,8 +61,23 @@ function normalizeTools(
   return result;
 }
 
+function sortByOrder<T extends { id: string }>(items: T[], order: string[]): T[] {
+  const rank = new Map(order.map((id, index) => [id, index]));
+  return [...items].sort((a, b) => {
+    const ai = rank.has(a.id) ? rank.get(a.id)! : Number.MAX_SAFE_INTEGER;
+    const bi = rank.has(b.id) ? rank.get(b.id)! : Number.MAX_SAFE_INTEGER;
+    if (ai !== bi) return ai - bi;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+type PageEntry =
+  | { kind: 'tool'; id: string; tool: ToolStatus }
+  | { kind: 'rec'; id: string; item: Recommendation };
+
 export default function App() {
   const api = window.poeToolkit;
+  const windowChrome = useWindowChrome(api ?? null);
   const [page, setPage] = useState<Page>('poe1');
   const [tools, setTools] = useState<ToolStatus[]>([]);
   const [recs, setRecs] = useState<Recommendation[]>([]);
@@ -64,6 +90,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
+  const [orders, setOrders] = useState<ToolOrders>(EMPTY_ORDERS);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -101,14 +128,16 @@ export default function App() {
     }
     setLoading(true);
     try {
-      const [list, recommendations, leagueInfo] = await Promise.all([
+      const [list, recommendations, leagueInfo, toolOrders] = await Promise.all([
         api.listTools(),
         api.listRecommendations(),
         api.getLeague(),
+        api.getToolOrders(),
       ]);
       setTools(list);
       setRecs(recommendations);
       setLeague(leagueInfo);
+      setOrders(toolOrders);
       void refreshAnnouncements();
     } catch (err) {
       showToast(String(err));
@@ -152,6 +181,35 @@ export default function App() {
     if (page === 'unused') return recs.filter((r) => r.unused);
     return [];
   }, [recs, page]);
+
+  const pageEntries = useMemo(() => {
+    const entries: PageEntry[] = [
+      ...pageRecs.map((item) => ({ kind: 'rec' as const, id: item.id, item })),
+      ...pageTools.map((tool) => ({ kind: 'tool' as const, id: tool.id, tool })),
+    ];
+    return sortByOrder(entries, orders[page] || []);
+  }, [pageRecs, pageTools, orders, page]);
+
+  const pageEntryIds = useMemo(
+    () => pageEntries.map((entry) => entry.id),
+    [pageEntries],
+  );
+
+  const entryById = useMemo(() => {
+    const map = new Map<string, PageEntry>();
+    for (const entry of pageEntries) map.set(entry.id, entry);
+    return map;
+  }, [pageEntries]);
+
+  async function onReorder(ids: string[]) {
+    if (!api) return;
+    setOrders((prev) => ({ ...prev, [page]: ids }));
+    try {
+      setOrders(await api.setToolOrder(page, ids));
+    } catch (err) {
+      showToast(String(err));
+    }
+  }
 
   const readyCount = tools.filter((t) => t.ready && !t.unused).length;
   const visibleToolCount = tools.filter((t) => !t.unused).length;
@@ -269,15 +327,15 @@ export default function App() {
     <div className="app-shell">
       <div className="atmosphere" aria-hidden />
 
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <span className="brand-mark">PoE</span>
-          <div>
-            <div className="brand">Toolkit</div>
-            <div className="brand-sub">Launcher</div>
-          </div>
-        </div>
+      <TitleBar
+        isMaximized={windowChrome.maximized}
+        onMinimize={windowChrome.minimize}
+        onMaximize={windowChrome.maximize}
+        onClose={windowChrome.close}
+      />
 
+      <div className="app-body">
+      <aside className="sidebar">
         <nav className="sidebar-nav">
           {NAV_ORDER.map((id) => (
             <button
@@ -333,29 +391,94 @@ export default function App() {
         <main className="workspace">
           {isLaunchPage && (
             <>
-              {page === 'poe1' && <LeagueCountdown league={league} />}
+              {page === 'poe1' && (
+                <LeagueCountdown
+                  league={league}
+                  onOpenWidget={() => {
+                    void api.openLeagueWidget();
+                  }}
+                />
+              )}
               {page === 'poe1' && (
                 <AnnouncementsFeed
                   feed={announcements}
                   loading={announcementsLoading}
                   onRefresh={() => void refreshAnnouncements()}
-                  onOpen={(url) => {
-                    void api.openExternal(url);
+                  onOpen={(item) => {
+                    void (async () => {
+                      await api.markAnnouncementRead(item.id);
+                      void api.openExternal(item.url);
+                      void refreshAnnouncements();
+                    })();
                   }}
                 />
               )}
-              {loading && pageTools.length === 0 ? (
+              {loading && pageEntries.length === 0 ? (
                 <p className="muted">Scanning for installations…</p>
-              ) : pageTools.length === 0 ? (
+              ) : pageEntries.length === 0 ? (
                 <p className="muted">No apps on this tab. Use Add app to include one.</p>
               ) : (
                 <section className="category">
-                  <div className="tool-grid">
-                    {pageTools.map((tool) => (
+                  <SortableGrid
+                    className="tool-grid"
+                    ids={pageEntryIds}
+                    onReorder={(ids) => void onReorder(ids)}
+                  >
+                    {(id, bind) => {
+                      const entry = entryById.get(id);
+                      if (!entry || entry.kind !== 'tool') return null;
+                      const tool = entry.tool;
+                      return (
+                        <ToolCard
+                          tool={tool}
+                          busy={busyId === tool.id}
+                          sortable={bind}
+                          onLaunch={() => void onLaunch(tool.id)}
+                          onPick={() => void onPick(tool.id)}
+                          onClear={() => void onClear(tool.id)}
+                          onDownload={() => void onDownload(tool.id)}
+                          onDismiss={() => void onDismiss(tool.id)}
+                          onHide={() => void onHide(tool.id)}
+                          onRestore={() => void onRestore(tool.id)}
+                        />
+                      );
+                    }}
+                  </SortableGrid>
+                </section>
+              )}
+            </>
+          )}
+
+          {page === 'optional' && (
+            <section className="category">
+              {pageEntries.length === 0 ? (
+                <p className="muted">Nothing here yet. Add an app or restore from Not in use.</p>
+              ) : (
+                <SortableGrid
+                  className="tool-grid"
+                  ids={pageEntryIds}
+                  onReorder={(ids) => void onReorder(ids)}
+                >
+                  {(id, bind) => {
+                    const entry = entryById.get(id);
+                    if (!entry) return null;
+                    if (entry.kind === 'rec') {
+                      return (
+                        <RecommendationCard
+                          item={entry.item}
+                          sortable={bind}
+                          onDownload={() => void onDownload(entry.item.id)}
+                          onHide={() => void onHide(entry.item.id)}
+                          onRestore={() => void onRestore(entry.item.id)}
+                        />
+                      );
+                    }
+                    const tool = entry.tool;
+                    return (
                       <ToolCard
-                        key={tool.id}
                         tool={tool}
                         busy={busyId === tool.id}
+                        sortable={bind}
                         onLaunch={() => void onLaunch(tool.id)}
                         onPick={() => void onPick(tool.id)}
                         onClear={() => void onClear(tool.id)}
@@ -364,86 +487,63 @@ export default function App() {
                         onHide={() => void onHide(tool.id)}
                         onRestore={() => void onRestore(tool.id)}
                       />
-                    ))}
-                  </div>
-                </section>
-              )}
-            </>
-          )}
-
-          {page === 'optional' && (
-            <section className="category">
-              {pageRecs.length === 0 && pageTools.length === 0 ? (
-                <p className="muted">Nothing here yet. Add an app or restore from Not in use.</p>
-              ) : (
-                <div className="tool-grid">
-                  {pageRecs.map((item) => (
-                    <RecommendationCard
-                      key={item.id}
-                      item={item}
-                      onDownload={() => void onDownload(item.id)}
-                      onHide={() => void onHide(item.id)}
-                      onRestore={() => void onRestore(item.id)}
-                    />
-                  ))}
-                  {pageTools.map((tool) => (
-                    <ToolCard
-                      key={tool.id}
-                      tool={tool}
-                      busy={busyId === tool.id}
-                      onLaunch={() => void onLaunch(tool.id)}
-                      onPick={() => void onPick(tool.id)}
-                      onClear={() => void onClear(tool.id)}
-                      onDownload={() => void onDownload(tool.id)}
-                      onDismiss={() => void onDismiss(tool.id)}
-                      onHide={() => void onHide(tool.id)}
-                      onRestore={() => void onRestore(tool.id)}
-                    />
-                  ))}
-                </div>
+                    );
+                  }}
+                </SortableGrid>
               )}
             </section>
           )}
 
           {page === 'unused' && (
             <section className="category">
-              {pageTools.length === 0 && pageRecs.length === 0 ? (
+              {pageEntries.length === 0 ? (
                 <p className="muted">
                   Nothing hidden. Hover an app and click × to move it here.
                 </p>
               ) : (
-                <div className="tool-grid">
-                  {pageRecs.map((item) => (
-                    <RecommendationCard
-                      key={item.id}
-                      item={item}
-                      mode="unused"
-                      onDownload={() => void onDownload(item.id)}
-                      onHide={() => void onHide(item.id)}
-                      onRestore={() => void onRestore(item.id)}
-                    />
-                  ))}
-                  {pageTools.map((tool) => (
-                    <ToolCard
-                      key={tool.id}
-                      tool={tool}
-                      mode="unused"
-                      busy={false}
-                      onLaunch={() => undefined}
-                      onPick={() => undefined}
-                      onClear={() => undefined}
-                      onDownload={() => undefined}
-                      onDismiss={() => undefined}
-                      onHide={() => undefined}
-                      onRestore={() => void onRestore(tool.id)}
-                      onRemoveCustom={
-                        tool.isCustom
-                          ? () => void onRemoveCustom(tool.id)
-                          : undefined
-                      }
-                    />
-                  ))}
-                </div>
+                <SortableGrid
+                  className="tool-grid"
+                  ids={pageEntryIds}
+                  onReorder={(ids) => void onReorder(ids)}
+                >
+                  {(id, bind) => {
+                    const entry = entryById.get(id);
+                    if (!entry) return null;
+                    if (entry.kind === 'rec') {
+                      return (
+                        <RecommendationCard
+                          item={entry.item}
+                          mode="unused"
+                          sortable={bind}
+                          onDownload={() => void onDownload(entry.item.id)}
+                          onHide={() => void onHide(entry.item.id)}
+                          onRestore={() => void onRestore(entry.item.id)}
+                        />
+                      );
+                    }
+                    const tool = entry.tool;
+                    return (
+                      <ToolCard
+                        tool={tool}
+                        mode="unused"
+                        busy={false}
+                        sortable={bind}
+                        onLaunch={() => undefined}
+                        onPick={() => undefined}
+                        onClear={() => undefined}
+                        onDownload={() => undefined}
+                        onDismiss={() => undefined}
+                        onHide={() => undefined}
+                        onRestore={() => void onRestore(tool.id)}
+                        onRemoveCustom={
+                          tool.isCustom
+                            ? () => void onRemoveCustom(tool.id)
+                            : undefined
+                        }
+                      />
+                    );
+                  }}
+                </SortableGrid>
               )}
             </section>
           )}
@@ -478,7 +578,7 @@ export default function App() {
               </div>
               <p className="settings-sheet-copy">
                 Custom paths, custom apps, and hidden (“Not in use”) items are
-                saved on this PC and kept after you close the app - including
+                saved on this PC and kept after you close the app including
                 the portable build. Deleting the .exe does not remove that data.
               </p>
               {storageInfo && (
@@ -512,6 +612,7 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
       </div>
 
       {toast && <div className="toast">{toast}</div>}
