@@ -7,7 +7,10 @@ import type {
   InfoLayout,
   LeagueInfo,
   OrderPage,
+  PoeAuthConfig,
+  PoeConnectionStatus,
   Recommendation,
+  StashCurrencyValueResult,
   StorageInfo,
   ToolCategory,
   ToolOrders,
@@ -19,9 +22,35 @@ import { LeagueCountdown } from './components/LeagueCountdown';
 import { obscureSensitive } from './lib/streamer';
 import { AnnouncementsFeed } from './components/AnnouncementsFeed';
 import { CurrencyExchange } from './components/CurrencyExchange';
+import { StashValue } from './components/StashValue';
 import { TitleBar, useWindowChrome } from './components/TitleBar';
 import { SortableGrid } from './components/SortableGrid';
 import './App.css';
+
+function poeErrorMessage(code?: string): string {
+  switch (code) {
+    case 'missing_client_id':
+      return 'Set a Client ID in Settings first.';
+    case 'missing_contact_email':
+      return 'Set a contact email in Settings first.';
+    case 'port_in_use':
+      return 'Port 44608 is already in use by another program. Close it and try again.';
+    case 'access_denied':
+      return 'Login was cancelled.';
+    case 'state_mismatch':
+      return 'Login failed (state mismatch). Try again.';
+    case 'timeout':
+      return 'Login timed out. Try again.';
+    case 'token_exchange_failed':
+      return 'Could not complete login. Check your Client ID.';
+    case 'encryption_unavailable':
+      return 'Could not securely store credentials on this system.';
+    case 'not_connected':
+      return 'Connect your PoE account first.';
+    default:
+      return code || 'Could not connect.';
+  }
+}
 
 type Page = OrderPage;
 
@@ -112,6 +141,21 @@ export default function App() {
   const [currencyPairIds, setCurrencyPairIds] = useState<string[]>([
     'chaos-divine',
   ]);
+  const [poeAuthConfig, setPoeAuthConfigState] = useState<PoeAuthConfig>({
+    clientId: null,
+    contactEmail: null,
+  });
+  const [poeClientIdInput, setPoeClientIdInput] = useState('');
+  const [poeContactEmailInput, setPoeContactEmailInput] = useState('');
+  const [poeConnectionStatus, setPoeConnectionStatus] =
+    useState<PoeConnectionStatus | null>(null);
+  const [poeConnecting, setPoeConnecting] = useState(false);
+  const [stashLeagues, setStashLeagues] = useState<string[]>([]);
+  const [stashLeague, setStashLeagueState] = useState<string>('');
+  const [stashValue, setStashValue] = useState<StashCurrencyValueResult | null>(
+    null,
+  );
+  const [stashValueLoading, setStashValueLoading] = useState(false);
   const [infoLayout, setInfoLayout] = useState<InfoLayout>('compact');
   const [previewLeagueLaunch, setPreviewLeagueLaunch] = useState(false);
   const [streamerMode, setStreamerMode] = useState(false);
@@ -208,6 +252,140 @@ export default function App() {
       setCurrencyPairs([]);
     }
   }, [api]);
+
+  const refreshPoeAuthConfig = useCallback(async () => {
+    if (!api) return;
+    try {
+      const config = await api.getPoeAuthConfig();
+      setPoeAuthConfigState(config);
+      setPoeClientIdInput(config.clientId || '');
+      setPoeContactEmailInput(config.contactEmail || '');
+    } catch {
+      /* keep last known */
+    }
+  }, [api]);
+
+  const refreshPoeStatus = useCallback(async () => {
+    if (!api) return;
+    try {
+      setPoeConnectionStatus(await api.getPoeConnectionStatus());
+    } catch {
+      setPoeConnectionStatus(null);
+    }
+  }, [api]);
+
+  const refreshStashValue = useCallback(
+    async (league: string) => {
+      if (!api || !league) return;
+      setStashValueLoading(true);
+      try {
+        setStashValue(await api.getStashCurrencyValue(league));
+      } catch (err) {
+        setStashValue({ ok: false, error: String(err) });
+      } finally {
+        setStashValueLoading(false);
+      }
+    },
+    [api],
+  );
+
+  const refreshStashLeagues = useCallback(
+    async (preferredLeague?: string | null) => {
+      if (!api) return;
+      try {
+        const result = await api.listStashLeagues();
+        if (!result.ok) {
+          setStashLeagues([]);
+          return;
+        }
+        setStashLeagues(result.leagues);
+        const league =
+          preferredLeague && result.leagues.includes(preferredLeague)
+            ? preferredLeague
+            : result.leagues[0] || '';
+        setStashLeagueState(league);
+        if (league) void refreshStashValue(league);
+      } catch {
+        setStashLeagues([]);
+      }
+    },
+    [api, refreshStashValue],
+  );
+
+  const onSelectStashLeague = useCallback(
+    async (league: string) => {
+      if (!api) return;
+      setStashLeagueState(league);
+      try {
+        await api.setStashLeague(league);
+      } catch {
+        /* best-effort persistence */
+      }
+      void refreshStashValue(league);
+    },
+    [api, refreshStashValue],
+  );
+
+  const onSavePoeAuthConfig = useCallback(async () => {
+    if (!api) return;
+    try {
+      const config = await api.setPoeAuthConfig(
+        poeClientIdInput.trim(),
+        poeContactEmailInput.trim(),
+      );
+      setPoeAuthConfigState(config);
+      showToast('PoE API settings saved');
+    } catch (err) {
+      showToast(String(err));
+    }
+  }, [api, poeClientIdInput, poeContactEmailInput, showToast]);
+
+  const onConnectPoe = useCallback(async () => {
+    if (!api) return;
+    const clientId = poeClientIdInput.trim();
+    const contactEmail = poeContactEmailInput.trim();
+    if (!clientId || !contactEmail) {
+      showToast('Enter a Client ID and contact email first');
+      return;
+    }
+    setPoeConnecting(true);
+    try {
+      const config = await api.setPoeAuthConfig(clientId, contactEmail);
+      setPoeAuthConfigState(config);
+      const result = await api.connectPoeAccount();
+      if (!result.ok) {
+        showToast(poeErrorMessage(result.error));
+      } else {
+        showToast(`Connected as ${result.accountName || 'your account'}`);
+      }
+      await refreshPoeStatus();
+      if (result.ok) void refreshStashLeagues();
+    } catch (err) {
+      showToast(String(err));
+    } finally {
+      setPoeConnecting(false);
+    }
+  }, [
+    api,
+    poeClientIdInput,
+    poeContactEmailInput,
+    refreshPoeStatus,
+    refreshStashLeagues,
+    showToast,
+  ]);
+
+  const onDisconnectPoe = useCallback(async () => {
+    if (!api) return;
+    try {
+      await api.disconnectPoeAccount();
+      setPoeConnectionStatus({ connected: false, accountName: null, expiresAt: null });
+      setStashLeagues([]);
+      setStashValue(null);
+      showToast('Disconnected PoE account');
+    } catch (err) {
+      showToast(String(err));
+    }
+  }, [api, showToast]);
 
   const onCurrencyLeagueChange = useCallback(
     async (game: 'poe1' | 'poe2', leagueId: string) => {
@@ -416,7 +594,30 @@ export default function App() {
     void api.getStorageInfo().then(setStorageInfo).catch(() => setStorageInfo(null));
     void refreshCurrencyLeagues();
     void refreshCurrencyPairs();
-  }, [api, settingsOpen, refreshCurrencyLeagues, refreshCurrencyPairs]);
+    void refreshPoeAuthConfig();
+    void refreshPoeStatus();
+  }, [
+    api,
+    settingsOpen,
+    refreshCurrencyLeagues,
+    refreshCurrencyPairs,
+    refreshPoeAuthConfig,
+    refreshPoeStatus,
+  ]);
+
+  // One-time load: PoE connection state, persisted league, and an initial
+  // valuation if already connected. Independent of settingsOpen since the
+  // stash-value card lives on the PoE1 page, not inside the settings sheet.
+  useEffect(() => {
+    if (!api) return;
+    void (async () => {
+      const status = await api.getPoeConnectionStatus().catch(() => null);
+      setPoeConnectionStatus(status);
+      if (!status?.connected) return;
+      const persistedLeague = await api.getStashLeague().catch(() => null);
+      await refreshStashLeagues(persistedLeague);
+    })();
+  }, [api, refreshStashLeagues]);
 
   const pageTools = useMemo(() => {
     if (page === 'unused') {
@@ -747,6 +948,18 @@ export default function App() {
                     />
                   </div>
                 </div>
+              )}
+              {page === 'poe1' && (
+                <StashValue
+                  status={poeConnectionStatus}
+                  leagues={stashLeagues}
+                  selectedLeague={stashLeague}
+                  value={stashValue}
+                  loading={stashValueLoading}
+                  onSelectLeague={(league) => void onSelectStashLeague(league)}
+                  onRefresh={() => void refreshStashValue(stashLeague)}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                />
               )}
               {page === 'poe2' && (
                 <div
@@ -1241,6 +1454,78 @@ export default function App() {
                     </label>
                   ))}
                 </div>
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="poe-client-id">
+                  PoE account (currency tab valuation)
+                </label>
+                <p className="settings-field-hint">
+                  Needs a free Public Client registered with GGG: redirect URI{' '}
+                  <code>http://127.0.0.1:44608/callback</code>, scopes{' '}
+                  <code>account:profile account:stashes account:characters</code>.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() =>
+                    void api.openExternal(
+                      'https://www.pathofexile.com/my-account/applications',
+                    )
+                  }
+                >
+                  Open GGG applications page
+                </button>
+                <input
+                  id="poe-client-id"
+                  className="settings-input"
+                  style={{ marginTop: '0.5rem' }}
+                  type="text"
+                  placeholder="Client ID"
+                  value={poeClientIdInput}
+                  onChange={(event) => setPoeClientIdInput(event.target.value)}
+                />
+                <input
+                  id="poe-contact-email"
+                  className="settings-input"
+                  style={{ marginTop: '0.4rem' }}
+                  type="email"
+                  placeholder="Contact email (used in API requests)"
+                  value={poeContactEmailInput}
+                  onChange={(event) => setPoeContactEmailInput(event.target.value)}
+                />
+                <div className="settings-sheet-actions" style={{ marginTop: '0.5rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={() => void onSavePoeAuthConfig()}
+                  >
+                    Save
+                  </button>
+                  {poeConnectionStatus?.connected ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => void onDisconnectPoe()}
+                    >
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-accent"
+                      disabled={poeConnecting}
+                      onClick={() => void onConnectPoe()}
+                    >
+                      {poeConnecting ? 'Waiting for browser…' : 'Connect'}
+                    </button>
+                  )}
+                </div>
+                <p className="settings-field-hint" style={{ marginTop: '0.4rem' }}>
+                  {poeConnectionStatus?.connected
+                    ? `Connected as ${poeConnectionStatus.accountName || 'your account'}.`
+                    : 'Not connected.'}
+                  {poeAuthConfig.clientId ? '' : ' No Client ID saved yet.'}
+                </p>
               </div>
               {storageInfo && (
                 <div className="settings-storage">

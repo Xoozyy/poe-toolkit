@@ -199,6 +199,29 @@ async function fetchEconomyLeagues(game = 'poe1') {
   }
 }
 
+/**
+ * Raw overview data from poe.ninja (e.g. type=Currency, type=Fragment). Shared by
+ * the currency-exchange footer and the stash valuator so both use the same
+ * fetch/timeout/error handling instead of duplicating it.
+ *
+ * `lines[i]` (price/value by id) and `items[i]` (display name/category by id)
+ * are parallel arrays matched by `id` — confirmed against a live response.
+ */
+async function fetchOverview(league, type = 'Currency', game = 'poe1') {
+  const g = normalizeGame(game);
+  const url = `${OVERVIEW_URL[g]}?league=${encodeURIComponent(league)}&type=${encodeURIComponent(type)}`;
+  const json = await fetchJson(url);
+  return {
+    lines: Array.isArray(json?.lines) ? json.lines : [],
+    items: Array.isArray(json?.items) ? json.items : [],
+  };
+}
+
+async function fetchOverviewLines(league, type = 'Currency', game = 'poe1') {
+  const { lines } = await fetchOverview(league, type, game);
+  return lines;
+}
+
 async function fetchCurrencyExchange(
   league = 'Standard',
   leagues = null,
@@ -209,9 +232,7 @@ async function fetchCurrencyExchange(
   const pageUrl = currencyPageUrl(league, leagues, g);
   const selectedPairs = normalizeCurrencyPairIds(pairIds);
   try {
-    const url = `${OVERVIEW_URL[g]}?league=${encodeURIComponent(league)}&type=Currency`;
-    const json = await fetchJson(url);
-    const lines = Array.isArray(json?.lines) ? json.lines : [];
+    const lines = await fetchOverviewLines(league, 'Currency', g);
     const rates = buildPairRates(lines, selectedPairs);
     const hasAnyRate = rates.some((entry) => typeof entry.rate === 'number');
 
@@ -253,6 +274,8 @@ async function fetchCurrencyExchange(
 module.exports = {
   fetchCurrencyExchange,
   fetchEconomyLeagues,
+  fetchOverview,
+  fetchOverviewLines,
   pickDefaultLeague,
   listCurrencyPairs,
   normalizeCurrencyPairIds,

@@ -37,7 +37,23 @@ function defaultConfig() {
     streamerMode: false,
     /** Enabled currency exchange pairs (multi-select) */
     currencyPairIds: ['chaos-divine'],
+    /** GGG OAuth public-client id + contact email for the User-Agent header (not secrets) */
+    poeAuth: { clientId: null, contactEmail: null },
+    /** Selected league for currency-tab stash valuation; null = not chosen yet */
+    stashLeague: null,
   };
+}
+
+function normalizePoeAuth(raw) {
+  const clientId =
+    raw && typeof raw.clientId === 'string' && raw.clientId.trim()
+      ? raw.clientId.trim()
+      : null;
+  const contactEmail =
+    raw && typeof raw.contactEmail === 'string' && raw.contactEmail.trim()
+      ? raw.contactEmail.trim()
+      : null;
+  return { clientId, contactEmail };
 }
 
 function normalizeToolOrders(raw) {
@@ -121,6 +137,11 @@ function readConfig() {
       previewLeagueLaunch: Boolean(parsed.previewLeagueLaunch),
       streamerMode: Boolean(parsed.streamerMode),
       currencyPairIds: normalizeCurrencyPairIds(parsed.currencyPairIds),
+      poeAuth: normalizePoeAuth(parsed.poeAuth),
+      stashLeague:
+        parsed.stashLeague == null || parsed.stashLeague === ''
+          ? null
+          : String(parsed.stashLeague),
     };
   } catch {
     return defaultConfig();
@@ -287,6 +308,28 @@ function setCurrencyPairIds(ids) {
   return config.currencyPairIds;
 }
 
+function getPoeAuthConfig() {
+  return normalizePoeAuth(readConfig().poeAuth);
+}
+
+function setPoeAuthConfig({ clientId, contactEmail }) {
+  const config = readConfig();
+  config.poeAuth = normalizePoeAuth({ clientId, contactEmail });
+  writeConfig(config);
+  return config.poeAuth;
+}
+
+function getStashLeague() {
+  return readConfig().stashLeague;
+}
+
+function setStashLeague(league) {
+  const config = readConfig();
+  config.stashLeague = league == null || league === '' ? null : String(league);
+  writeConfig(config);
+  return config.stashLeague;
+}
+
 function markAnnouncementRead(id) {
   const sid = String(id);
   const config = readConfig();
@@ -333,6 +376,10 @@ module.exports = {
   setStreamerMode,
   getCurrencyPairIds,
   setCurrencyPairIds,
+  getPoeAuthConfig,
+  setPoeAuthConfig,
+  getStashLeague,
+  setStashLeague,
   markAnnouncementRead,
   getReadAnnouncementIds,
   getToolOrders,

@@ -1266,6 +1266,99 @@
   padding: 0 0.05rem;
 }
 
+.stash-value-card {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.28);
+  padding: 0.6rem 0.75rem;
+  margin: 0 0 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.stash-value-cta {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.stash-value-cta-copy {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  max-width: 34rem;
+  line-height: 1.4;
+}
+
+.stash-value-kicker {
+  margin: 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.stash-value-heading {
+  margin: 0.08rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.stash-value-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.stash-value-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.stash-value-league-select {
+  max-width: 12rem;
+}
+
+.stash-value-status {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.stash-value-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.stash-value-total {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.stash-value-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.stash-value-meta {
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
 .category {
   flex: 0 0 auto;
 }

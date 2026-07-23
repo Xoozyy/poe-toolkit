@@ -31,6 +31,10 @@ const {
   setStreamerMode,
   getCurrencyPairIds,
   setCurrencyPairIds,
+  getPoeAuthConfig,
+  setPoeAuthConfig,
+  getStashLeague,
+  setStashLeague,
   configPath,
   setUnused,
   addCustomApp,
@@ -49,6 +53,14 @@ const {
   listCurrencyPairs,
   normalizeGame,
 } = require('./currency.cjs');
+const {
+  startLoginFlow,
+  getValidAccessToken,
+  disconnect: disconnectPoeAuth,
+  getConnectionStatus,
+} = require('./poeAuth.cjs');
+const { listCharacterLeagues } = require('./poeStash.cjs');
+const { getCurrencyStashValue } = require('./stashValuation.cjs');
 
 /**
  * Resolve which economy league to use for exchange rates.
@@ -336,6 +348,35 @@ function registerIpc() {
       rate,
     };
   });
+  ipcMain.handle('poeAuth:getConfig', () => getPoeAuthConfig());
+  ipcMain.handle('poeAuth:setConfig', (_event, clientId, contactEmail) =>
+    setPoeAuthConfig({ clientId, contactEmail }),
+  );
+  ipcMain.handle('poeAuth:getStatus', () => getConnectionStatus());
+  ipcMain.handle('poeAuth:login', () => startLoginFlow());
+  ipcMain.handle('poeAuth:logout', () => disconnectPoeAuth());
+
+  ipcMain.handle('poeStash:listLeagues', async () => {
+    const accessToken = await getValidAccessToken();
+    if (!accessToken) {
+      return { ok: false, error: 'not_connected', leagues: [] };
+    }
+    try {
+      const leagues = await listCharacterLeagues(accessToken);
+      return { ok: true, leagues };
+    } catch (err) {
+      return { ok: false, error: String(err?.message || err), leagues: [] };
+    }
+  });
+  ipcMain.handle('poeStash:setLeague', (_event, league) => ({
+    ok: true,
+    league: setStashLeague(league),
+  }));
+  ipcMain.handle('poeStash:getLeague', () => getStashLeague());
+  ipcMain.handle('poeStash:getCurrencyValue', (_event, league) =>
+    getCurrencyStashValue(league),
+  );
+
   ipcMain.handle('ui:getInfoLayout', () => getInfoLayout());
   ipcMain.handle('ui:setInfoLayout', (_event, layout) => {
     return { ok: true, infoLayout: setInfoLayout(layout) };

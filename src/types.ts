@@ -106,6 +106,44 @@ export interface StorageInfo {
   configPath: string;
 }
 
+export interface PoeAuthConfig {
+  clientId: string | null;
+  contactEmail: string | null;
+}
+
+export interface PoeConnectionStatus {
+  connected: boolean;
+  accountName: string | null;
+  expiresAt: string | null;
+}
+
+export interface PoeLoginResult {
+  ok: boolean;
+  accountName?: string;
+  error?: string;
+  detail?: string;
+}
+
+export interface StashLeaguesResult {
+  ok: boolean;
+  leagues: string[];
+  error?: string;
+}
+
+export interface StashCurrencyValueResult {
+  ok: boolean;
+  league?: string;
+  totalChaos?: number;
+  totalDivine?: number | null;
+  remainderChaos?: number;
+  tabCount?: number;
+  matchedItemCount?: number;
+  skippedItemCount?: number;
+  skippedSample?: string[];
+  fetchedAt?: string;
+  error?: string;
+}
+
 export interface ToolsBundle {
   tools: ToolStatus[];
   recommendations: Recommendation[];
@@ -169,6 +207,20 @@ export interface PoeToolkitApi {
     enabled: boolean,
   ) => Promise<{ ok: boolean; streamerMode: boolean }>;
   getStorageInfo: () => Promise<StorageInfo>;
+  getPoeAuthConfig: () => Promise<PoeAuthConfig>;
+  setPoeAuthConfig: (
+    clientId: string,
+    contactEmail: string,
+  ) => Promise<PoeAuthConfig>;
+  getPoeConnectionStatus: () => Promise<PoeConnectionStatus>;
+  connectPoeAccount: () => Promise<PoeLoginResult>;
+  disconnectPoeAccount: () => Promise<{ ok: boolean }>;
+  listStashLeagues: () => Promise<StashLeaguesResult>;
+  getStashLeague: () => Promise<string | null>;
+  setStashLeague: (league: string) => Promise<{ ok: boolean; league: string | null }>;
+  getStashCurrencyValue: (
+    league: string,
+  ) => Promise<StashCurrencyValueResult>;
   openStorageFolder: () => Promise<{ ok: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
   rescan: () => Promise<ToolStatus[]>;

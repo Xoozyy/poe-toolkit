@@ -15,6 +15,17 @@ contextBridge.exposeInMainWorld('poeToolkit', {
   setCurrencyPairs: (ids) => ipcRenderer.invoke('currency:setPairs', ids),
   setCurrencyLeague: (leagueId, game) =>
     ipcRenderer.invoke('currency:setLeague', leagueId, game),
+  getPoeAuthConfig: () => ipcRenderer.invoke('poeAuth:getConfig'),
+  setPoeAuthConfig: (clientId, contactEmail) =>
+    ipcRenderer.invoke('poeAuth:setConfig', clientId, contactEmail),
+  getPoeConnectionStatus: () => ipcRenderer.invoke('poeAuth:getStatus'),
+  connectPoeAccount: () => ipcRenderer.invoke('poeAuth:login'),
+  disconnectPoeAccount: () => ipcRenderer.invoke('poeAuth:logout'),
+  listStashLeagues: () => ipcRenderer.invoke('poeStash:listLeagues'),
+  getStashLeague: () => ipcRenderer.invoke('poeStash:getLeague'),
+  setStashLeague: (league) => ipcRenderer.invoke('poeStash:setLeague', league),
+  getStashCurrencyValue: (league) =>
+    ipcRenderer.invoke('poeStash:getCurrencyValue', league),
   getInfoLayout: () => ipcRenderer.invoke('ui:getInfoLayout'),
   setInfoLayout: (layout) => ipcRenderer.invoke('ui:setInfoLayout', layout),
   getPreviewLeagueLaunch: () => ipcRenderer.invoke('ui:getPreviewLeagueLaunch'),
