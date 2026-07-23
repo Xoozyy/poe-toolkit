@@ -32,7 +32,7 @@ const PAGE_COPY: Record<
   optional: {
     nav: 'Optional',
     title: 'Optional tools',
-    lede: 'Not launched from here by default — summaries, downloads, or your own apps.',
+    lede: 'Not launched from here by default - summaries, downloads, or your own apps.',
   },
   unused: {
     nav: 'Not in use',
@@ -478,7 +478,7 @@ export default function App() {
               </div>
               <p className="settings-sheet-copy">
                 Custom paths, custom apps, and hidden (“Not in use”) items are
-                saved on this PC and kept after you close the app — including
+                saved on this PC and kept after you close the app - including
                 the portable build. Deleting the .exe does not remove that data.
               </p>
               {storageInfo && (

@@ -22,8 +22,8 @@ npm run dist
 
 Outputs in `release/`:
 
-- `PoE Toolkit-*-x64.exe` — installer
-- `PoE Toolkit-*-portable.exe` — portable
+- `PoE Toolkit-*-x64.exe` - installer
+- `PoE Toolkit-*-portable.exe` - portable
 
 ## Notes
 

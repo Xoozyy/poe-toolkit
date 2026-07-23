@@ -109,7 +109,7 @@ const CATALOG = [
     id: 'chaos-recipe-enhancer',
     name: 'Chaos Recipe Enhancer',
     category: 'poe1',
-    blurb: 'Chaos / regal recipe helper',
+    blurb: 'Chaos / Regal recipe helper',
     exeNames: [
       'ChaosRecipeEnhancer.exe',
       'Chaos Recipe Enhancer.exe',
@@ -174,7 +174,7 @@ const CATALOG = [
   },
 ];
 
-/** Optional utilities — shown on Recommendations page (no launch/scan). */
+/** Optional utilities - shown on Recommendations page (no launch/scan). */
 /** @type {RecommendationDef[]} */
 const RECOMMENDATIONS = [
   {
