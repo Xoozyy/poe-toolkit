@@ -28,9 +28,37 @@ import { AnnouncementsFeed } from './components/AnnouncementsFeed';
 import { CurrencyExchange } from './components/CurrencyExchange';
 import { TitleBar, useWindowChrome } from './components/TitleBar';
 import { SortableGrid } from './components/SortableGrid';
+import { OnboardingTour, type TourStep } from './components/OnboardingTour';
 import './App.css';
 
 type Page = OrderPage;
+
+const TOUR_STEPS: TourStep[] = [
+  {
+    id: 'nav',
+    target: 'nav',
+    title: 'Your launch tabs',
+    body: 'Jump between Path of Exile, Path of Exile 2, Optional tools, and anything you’ve hidden in Not in use.',
+  },
+  {
+    id: 'apps',
+    target: 'apps',
+    title: 'Launch and customize',
+    body: 'Click Launch to start an app. Right-click a card to set paths, edit custom apps, or move them between sections.',
+  },
+  {
+    id: 'sections',
+    target: 'sections',
+    title: 'Organize with sections',
+    body: 'Right-click empty space to add a section. Drag cards to reorder, or use the snap line to drop them where you want.',
+  },
+  {
+    id: 'tray',
+    target: 'tray',
+    title: 'Close goes to the tray',
+    body: 'The X hides PoE Toolkit in the system tray by default. Click the tray icon to bring it back, or Quit from the tray menu.',
+  },
+];
 
 const EMPTY_ORDERS: ToolOrders = {
   poe1: [],
@@ -224,6 +252,7 @@ export default function App() {
   const [previewLeagueLaunch, setPreviewLeagueLaunch] = useState(false);
   const [streamerMode, setStreamerMode] = useState(false);
   const [closeToTray, setCloseToTray] = useState(true);
+  const [tourOpen, setTourOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -621,6 +650,28 @@ export default function App() {
     [api, showToast],
   );
 
+  const finishTour = useCallback(async () => {
+    setTourOpen(false);
+    if (!api) return;
+    try {
+      await api.setOnboardingDone(true);
+    } catch (err) {
+      showToast(String(err));
+    }
+  }, [api, showToast]);
+
+  const replayTour = useCallback(async () => {
+    setSettingsOpen(false);
+    if (page !== 'poe1') setPage('poe1');
+    setTourOpen(true);
+    if (!api) return;
+    try {
+      await api.setOnboardingDone(false);
+    } catch {
+      // still show the tour locally
+    }
+  }, [api, page]);
+
   const refresh = useCallback(async () => {
     if (!api) {
       setLoading(false);
@@ -640,6 +691,7 @@ export default function App() {
         streamer,
         queueSettings,
         trayClose,
+        onboardingDone,
       ] = await Promise.all([
         api.listTools(),
         api.listRecommendations(),
@@ -652,6 +704,7 @@ export default function App() {
         api.getStreamerMode(),
         api.getQueueReminder(),
         api.getCloseToTray(),
+        api.getOnboardingDone(),
       ]);
       setTools(list);
       setRecs(recommendations);
@@ -667,6 +720,7 @@ export default function App() {
         queueSettings?.enabled == null ? true : Boolean(queueSettings.enabled),
       );
       setQueueReminderMinutes(queueSettings?.minutes ?? 90);
+      if (!onboardingDone) setTourOpen(true);
       void refreshAnnouncements();
       void refreshCurrency();
       void checkCurrencyLeagueOffers();
@@ -1303,7 +1357,7 @@ export default function App() {
 
       <div className="app-body">
       <aside className="sidebar">
-        <nav className="sidebar-nav">
+        <nav className="sidebar-nav" data-tour="nav">
           {NAV_ORDER.map((id) => (
             <button
               key={id}
@@ -1468,11 +1522,16 @@ export default function App() {
               <div
                 className="workspace-primary"
                 onContextMenu={openSectionsMenu}
+                data-tour="apps"
               >
                 {loading && pageEntryIds.length === 0 ? (
                   <p className="muted">Scanning for installations…</p>
                 ) : (
-                  <div className="app-sections" onContextMenu={openSectionsMenu}>
+                  <div
+                    className="app-sections"
+                    onContextMenu={openSectionsMenu}
+                    data-tour="sections"
+                  >
                     {(activeLayout?.sections || []).map((section, index) => {
                       const moveTargets = (activeLayout?.sections || [])
                         .filter((s) => s.id !== section.id)
@@ -2173,6 +2232,20 @@ export default function App() {
                 </label>
               </div>
               <div className="settings-field">
+                <label className="settings-field-label">Quick tour</label>
+                <p className="settings-field-hint">
+                  Replay the first-run tips for tabs, cards, sections, and the
+                  system tray.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => void replayTour()}
+                >
+                  Show tips again
+                </button>
+              </div>
+              <div className="settings-field">
                 <label className="settings-field-label" htmlFor="info-layout">
                   League & news layout
                 </label>
@@ -2473,6 +2546,12 @@ export default function App() {
           </div>,
           document.body,
         )}
+      <OnboardingTour
+        steps={TOUR_STEPS}
+        open={tourOpen}
+        onComplete={() => void finishTour()}
+        onSkip={() => void finishTour()}
+      />
       {toast && <div className="toast">{toast}</div>}
 
       {leagueOffer && (

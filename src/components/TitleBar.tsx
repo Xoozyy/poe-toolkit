@@ -51,6 +51,7 @@ export function TitleBar({
           onClick={onClose}
           aria-label="Close"
           title="Close"
+          data-tour="tray"
         >
           <span className="titlebar-icon titlebar-icon-close" aria-hidden />
         </button>

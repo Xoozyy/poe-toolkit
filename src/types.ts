@@ -211,6 +211,10 @@ export interface PoeToolkitApi {
   setCloseToTray: (
     enabled: boolean,
   ) => Promise<{ ok: boolean; closeToTray: boolean }>;
+  getOnboardingDone: () => Promise<boolean>;
+  setOnboardingDone: (
+    done: boolean,
+  ) => Promise<{ ok: boolean; onboardingDone: boolean }>;
   getQueueReminder: () => Promise<{ enabled: boolean; minutes: number }>;
   setQueueReminder: (payload: {
     enabled?: boolean;

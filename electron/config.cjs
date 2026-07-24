@@ -186,6 +186,8 @@ function defaultConfig() {
     streamerMode: false,
     /** X button hides to tray instead of quitting */
     closeToTray: true,
+    /** First-run tour completed */
+    onboardingDone: false,
     /** Enabled currency exchange pairs (multi-select) */
     currencyPairIds: ['chaos-divine'],
     /** Last dismissed "switch to new league" offer per game */
@@ -287,6 +289,9 @@ function readConfig() {
       streamerMode: Boolean(parsed.streamerMode),
       closeToTray:
         parsed.closeToTray == null ? true : Boolean(parsed.closeToTray),
+      // Missing key = existing install; only brand-new configs start the tour
+      onboardingDone:
+        parsed.onboardingDone == null ? true : Boolean(parsed.onboardingDone),
       currencyPairIds: normalizeCurrencyPairIds(parsed.currencyPairIds),
       currencyLeagueOfferDismissed: normalizeOfferDismissed(
         parsed.currencyLeagueOfferDismissed,
@@ -602,6 +607,17 @@ function setCloseToTray(enabled) {
   return config.closeToTray;
 }
 
+function getOnboardingDone() {
+  return Boolean(readConfig().onboardingDone);
+}
+
+function setOnboardingDone(done) {
+  const config = readConfig();
+  config.onboardingDone = Boolean(done);
+  writeConfig(config);
+  return config.onboardingDone;
+}
+
 function getCurrencyPairIds() {
   return normalizeCurrencyPairIds(readConfig().currencyPairIds);
 }
@@ -716,6 +732,8 @@ module.exports = {
   setStreamerMode,
   getCloseToTray,
   setCloseToTray,
+  getOnboardingDone,
+  setOnboardingDone,
   getCurrencyPairIds,
   setCurrencyPairIds,
   markAnnouncementRead,

@@ -40,6 +40,8 @@ const {
   setStreamerMode,
   getCloseToTray,
   setCloseToTray,
+  getOnboardingDone,
+  setOnboardingDone,
   getCurrencyPairIds,
   setCurrencyPairIds,
   configPath,
@@ -318,6 +320,11 @@ function registerIpc() {
   ipcMain.handle('ui:setCloseToTray', (_event, enabled) => {
     const closeToTray = setCloseToTray(Boolean(enabled));
     return { ok: true, closeToTray };
+  });
+  ipcMain.handle('ui:getOnboardingDone', () => getOnboardingDone());
+  ipcMain.handle('ui:setOnboardingDone', (_event, done) => {
+    const onboardingDone = setOnboardingDone(Boolean(done));
+    return { ok: true, onboardingDone };
   });
   ipcMain.handle('ui:showMainWindow', () => {
     showMainWindow();

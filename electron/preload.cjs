@@ -30,6 +30,9 @@ contextBridge.exposeInMainWorld('poeToolkit', {
   setStreamerMode: (enabled) => ipcRenderer.invoke('ui:setStreamerMode', enabled),
   getCloseToTray: () => ipcRenderer.invoke('ui:getCloseToTray'),
   setCloseToTray: (enabled) => ipcRenderer.invoke('ui:setCloseToTray', enabled),
+  getOnboardingDone: () => ipcRenderer.invoke('ui:getOnboardingDone'),
+  setOnboardingDone: (done) =>
+    ipcRenderer.invoke('ui:setOnboardingDone', done),
   getQueueReminder: () => ipcRenderer.invoke('ui:getQueueReminder'),
   setQueueReminder: (payload) =>
     ipcRenderer.invoke('ui:setQueueReminder', payload),
