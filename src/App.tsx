@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   AnnouncementsResult,
   CurrencyExchangeRate,
+  CurrencyLeagueOffer,
   CurrencyPairOption,
   EconomyLeague,
   InfoLayout,
+  LayoutPage,
   LeagueInfo,
   OrderPage,
+  PageLayout,
+  PageLayouts,
+  QueueReminderOffer,
   Recommendation,
   StorageInfo,
   ToolCategory,
@@ -31,6 +38,100 @@ const EMPTY_ORDERS: ToolOrders = {
   optional: [],
   unused: [],
 };
+
+const EMPTY_LAYOUTS: PageLayouts = {
+  poe1: { sections: [{ id: 'sec_poe1_apps', name: 'Apps', toolIds: [] }] },
+  poe2: { sections: [{ id: 'sec_poe2_apps', name: 'Apps', toolIds: [] }] },
+  optional: {
+    sections: [{ id: 'sec_optional_apps', name: 'Apps', toolIds: [] }],
+  },
+};
+
+function isLayoutPage(page: Page): page is LayoutPage {
+  return page === 'poe1' || page === 'poe2' || page === 'optional';
+}
+
+function newSectionId(page: LayoutPage) {
+  return `sec_${page}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function cloneLayout(layout: PageLayout): PageLayout {
+  return {
+    sections: layout.sections.map((section) => ({
+      ...section,
+      toolIds: [...section.toolIds],
+    })),
+  };
+}
+
+function ensureLayoutHasItems(layout: PageLayout, itemIds: string[]): PageLayout {
+  const allowed = new Set(itemIds);
+  const seen = new Set<string>();
+  const sections = layout.sections.map((section) => ({
+    ...section,
+    toolIds: section.toolIds.filter((id) => {
+      if (!allowed.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    }),
+  }));
+  if (sections.length === 0) {
+    sections.push({ id: 'sec_apps', name: 'Apps', toolIds: [] });
+  }
+  const missing = itemIds.filter((id) => !seen.has(id));
+  if (missing.length > 0) {
+    sections[0] = {
+      ...sections[0],
+      toolIds: [...sections[0].toolIds, ...missing],
+    };
+  }
+  return { sections };
+}
+
+function layoutEquals(a: PageLayout, b: PageLayout): boolean {
+  if (a.sections.length !== b.sections.length) return false;
+  return a.sections.every((section, index) => {
+    const other = b.sections[index];
+    return (
+      section.id === other.id &&
+      section.name === other.name &&
+      section.toolIds.length === other.toolIds.length &&
+      section.toolIds.every((id, i) => id === other.toolIds[i])
+    );
+  });
+}
+
+function reorderSectionIds(
+  layout: PageLayout,
+  sectionId: string,
+  ids: string[],
+): PageLayout {
+  const next = cloneLayout(layout);
+  const section = next.sections.find((s) => s.id === sectionId);
+  if (!section) return layout;
+  section.toolIds = ids;
+  return next;
+}
+
+function moveBetweenSections(
+  layout: PageLayout,
+  fromSectionId: string,
+  toSectionId: string,
+  itemId: string,
+  beforeId: string | null,
+): PageLayout {
+  const next = cloneLayout(layout);
+  for (const section of next.sections) {
+    section.toolIds = section.toolIds.filter((id) => id !== itemId);
+  }
+  const to = next.sections.find((s) => s.id === toSectionId);
+  if (!to) return layout;
+  const idx = beforeId ? to.toolIds.indexOf(beforeId) : -1;
+  if (idx >= 0) to.toolIds.splice(idx, 0, itemId);
+  else to.toolIds.push(itemId);
+  void fromSectionId;
+  return next;
+}
 
 const PAGE_COPY: Record<
   Page,
@@ -112,9 +213,17 @@ export default function App() {
   const [currencyPairIds, setCurrencyPairIds] = useState<string[]>([
     'chaos-divine',
   ]);
+  const [leagueOffer, setLeagueOffer] = useState<CurrencyLeagueOffer | null>(
+    null,
+  );
+  const [queueReminder, setQueueReminder] =
+    useState<QueueReminderOffer | null>(null);
+  const [queueReminderEnabled, setQueueReminderEnabled] = useState(true);
+  const [queueReminderMinutes, setQueueReminderMinutes] = useState(90);
   const [infoLayout, setInfoLayout] = useState<InfoLayout>('compact');
   const [previewLeagueLaunch, setPreviewLeagueLaunch] = useState(false);
   const [streamerMode, setStreamerMode] = useState(false);
+  const [closeToTray, setCloseToTray] = useState(true);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -123,8 +232,23 @@ export default function App() {
   const [addStep, setAddStep] = useState<'choose' | 'link'>('choose');
   const [linkName, setLinkName] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
+  const [editToolId, setEditToolId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editBlurb, setEditBlurb] = useState('');
+  const [editUrl, setEditUrl] = useState('');
+  const [editDownloadUrl, setEditDownloadUrl] = useState('');
+  const [editCategory, setEditCategory] = useState<ToolCategory>('poe1');
+  const [editPath, setEditPath] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null);
   const [orders, setOrders] = useState<ToolOrders>(EMPTY_ORDERS);
+  const [pageLayouts, setPageLayouts] = useState<PageLayouts>(EMPTY_LAYOUTS);
+  const [editingSectionId, setEditingSectionId] = useState<string | null>(null);
+  const [sectionsMenuPos, setSectionsMenuPos] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
+  const sectionsMenuRef = useRef<HTMLDivElement | null>(null);
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -173,6 +297,28 @@ export default function App() {
       setCurrencyPoe2({ ok: false, game: 'poe2', league: 'Standard', error: message });
     } finally {
       setCurrencyLoading(false);
+    }
+  }, [api]);
+
+  const checkCurrencyLeagueOffers = useCallback(async () => {
+    if (!api) return;
+    try {
+      const result = await api.getCurrencyLeagueOffers();
+      const next = result?.offers?.[0] ?? null;
+      if (!next) return;
+      setLeagueOffer((prev) => {
+        if (prev?.preview) return prev;
+        if (
+          prev &&
+          prev.game === next.game &&
+          prev.suggested.id === next.suggested.id
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    } catch {
+      /* ignore offer check failures */
     }
   }, [api]);
 
@@ -233,6 +379,11 @@ export default function App() {
           if (result.rate) setCurrencyPoe1(result.rate);
           else void refreshCurrency();
         }
+        setLeagueOffer((prev) =>
+          prev && prev.game === game && prev.suggested.id === leagueId
+            ? null
+            : prev,
+        );
       } catch (err) {
         showToast(String(err));
       } finally {
@@ -240,6 +391,127 @@ export default function App() {
       }
     },
     [api, refreshCurrency, refreshCurrencyLeagues, showToast],
+  );
+
+  const onAcceptLeagueOffer = useCallback(async () => {
+    if (!leagueOffer) return;
+    if (leagueOffer.preview) {
+      setLeagueOffer(null);
+      showToast('Preview only — no league change');
+      return;
+    }
+    const { game, suggested } = leagueOffer;
+    setLeagueOffer(null);
+    await onCurrencyLeagueChange(game, suggested.id);
+    showToast(`Switched to ${suggested.name}`);
+  }, [leagueOffer, onCurrencyLeagueChange, showToast]);
+
+  const onDismissLeagueOffer = useCallback(async () => {
+    if (!leagueOffer) return;
+    const { game, suggested, preview } = leagueOffer;
+    setLeagueOffer(null);
+    if (preview || !api) return;
+    try {
+      await api.dismissCurrencyLeagueOffer(game, suggested.id);
+    } catch {
+      /* ignore */
+    }
+  }, [api, leagueOffer]);
+
+  const onPreviewLeagueOffer = useCallback(() => {
+    const game = page === 'poe2' ? 'poe2' : 'poe1';
+    const currentLeague =
+      game === 'poe2' ? currencyLeaguePoe2 : currencyLeaguePoe1;
+    const currentName = currentLeague;
+    const suggestedName =
+      (game === 'poe2' ? leaguePoe2?.nextName : leaguePoe1?.nextName) ||
+      'New Challenge League';
+    setLeagueOffer({
+      game,
+      currentLeague,
+      currentName,
+      suggested: {
+        id: `__preview__:${suggestedName}`,
+        name: `${suggestedName} (preview)`,
+      },
+      preview: true,
+    });
+    setSettingsOpen(false);
+  }, [
+    page,
+    currencyLeaguePoe1,
+    currencyLeaguePoe2,
+    leaguePoe1?.nextName,
+    leaguePoe2?.nextName,
+  ]);
+
+  const onPreviewQueueReminder = useCallback(() => {
+    const game = page === 'poe2' ? 'poe2' : 'poe1';
+    const league = game === 'poe2' ? leaguePoe2 : leaguePoe1;
+    setQueueReminder({
+      game,
+      leagueName: league?.nextName || 'Next league',
+      startMs: league?.startMs ?? Date.now() + queueReminderMinutes * 60_000,
+      minutesBefore: queueReminderMinutes,
+      preview: true,
+    });
+    setSettingsOpen(false);
+  }, [page, leaguePoe1, leaguePoe2, queueReminderMinutes]);
+
+  const onDismissQueueReminder = useCallback(async () => {
+    if (!queueReminder) return;
+    const { game, startMs, preview } = queueReminder;
+    setQueueReminder(null);
+    if (preview || !api) return;
+    try {
+      await api.dismissQueueReminder(game, `${game}:${startMs}`);
+    } catch {
+      /* ignore */
+    }
+  }, [api, queueReminder]);
+
+  const onLaunchFromQueueReminder = useCallback(async () => {
+    if (!queueReminder || !api) return;
+    const game = queueReminder.game;
+    const preview = queueReminder.preview;
+    const startMs = queueReminder.startMs;
+    setQueueReminder(null);
+    if (!preview) {
+      try {
+        await api.dismissQueueReminder(game, `${game}:${startMs}`);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (preview) {
+      showToast('Preview only — launch skipped');
+      return;
+    }
+    setBusyId(game);
+    try {
+      const result = await api.launch(game);
+      if (!result.ok) showToast(result.error || 'Launch failed');
+    } catch (err) {
+      showToast(String(err));
+    } finally {
+      setBusyId(null);
+    }
+  }, [api, queueReminder, showToast]);
+
+  const onQueueReminderSettingsChange = useCallback(
+    async (next: { enabled?: boolean; minutes?: number }) => {
+      if (!api) return;
+      if (next.enabled != null) setQueueReminderEnabled(next.enabled);
+      if (next.minutes != null) setQueueReminderMinutes(next.minutes);
+      try {
+        const result = await api.setQueueReminder(next);
+        setQueueReminderEnabled(Boolean(result.enabled));
+        setQueueReminderMinutes(result.minutes);
+      } catch (err) {
+        showToast(String(err));
+      }
+    },
+    [api, showToast],
   );
 
   const onCurrencyPairToggle = useCallback(
@@ -334,6 +606,21 @@ export default function App() {
     [api, showToast],
   );
 
+  const onCloseToTrayChange = useCallback(
+    async (enabled: boolean) => {
+      if (!api) return;
+      setCloseToTray(enabled);
+      try {
+        const result = await api.setCloseToTray(enabled);
+        setCloseToTray(Boolean(result?.closeToTray));
+      } catch (err) {
+        showToast(String(err));
+        setCloseToTray(!enabled);
+      }
+    },
+    [api, showToast],
+  );
+
   const refresh = useCallback(async () => {
     if (!api) {
       setLoading(false);
@@ -347,35 +634,48 @@ export default function App() {
         league1,
         league2,
         toolOrders,
+        layouts,
         layout,
         preview,
         streamer,
+        queueSettings,
+        trayClose,
       ] = await Promise.all([
         api.listTools(),
         api.listRecommendations(),
         api.getLeague('poe1'),
         api.getLeague('poe2'),
         api.getToolOrders(),
+        api.getPageLayouts(),
         api.getInfoLayout(),
         api.getPreviewLeagueLaunch(),
         api.getStreamerMode(),
+        api.getQueueReminder(),
+        api.getCloseToTray(),
       ]);
       setTools(list);
       setRecs(recommendations);
       setLeaguePoe1(league1);
       setLeaguePoe2(league2);
       setOrders(toolOrders);
+      setPageLayouts(layouts || EMPTY_LAYOUTS);
       setInfoLayout(layout === 'normal' ? 'normal' : 'compact');
       setPreviewLeagueLaunch(Boolean(preview));
       setStreamerMode(Boolean(streamer));
+      setCloseToTray(trayClose == null ? true : Boolean(trayClose));
+      setQueueReminderEnabled(
+        queueSettings?.enabled == null ? true : Boolean(queueSettings.enabled),
+      );
+      setQueueReminderMinutes(queueSettings?.minutes ?? 90);
       void refreshAnnouncements();
       void refreshCurrency();
+      void checkCurrencyLeagueOffers();
     } catch (err) {
       showToast(String(err));
     } finally {
       setLoading(false);
     }
-  }, [api, showToast, refreshAnnouncements, refreshCurrency]);
+  }, [api, showToast, refreshAnnouncements, refreshCurrency, checkCurrencyLeagueOffers]);
 
   useEffect(() => {
     void refresh();
@@ -387,29 +687,114 @@ export default function App() {
       void refreshAnnouncements();
       void refreshCurrency();
       void refreshLeague();
+      void checkCurrencyLeagueOffers();
     }, 15 * 60 * 1000);
     return () => window.clearInterval(id);
-  }, [api, refreshAnnouncements, refreshCurrency, refreshLeague]);
+  }, [api, refreshAnnouncements, refreshCurrency, refreshLeague, checkCurrencyLeagueOffers]);
 
   // Closer poll near launch so poe.ninja detection / schedule flip feels snappy
   useEffect(() => {
     if (!api) return;
     const nearLaunch = [leaguePoe1, leaguePoe2].some((info) => {
-      if (!info?.startMs || info.stage === 'login') return false;
+      if (!info) return false;
+      if (info.stage === 'login') return true;
+      if (!info.startMs) return false;
       return info.startMs - Date.now() <= 6 * 60 * 60 * 1000;
     });
     if (!nearLaunch) return;
     const id = window.setInterval(() => {
       void refreshLeague();
+      void refreshCurrency();
+      void checkCurrencyLeagueOffers();
     }, 60 * 1000);
     return () => window.clearInterval(id);
-  }, [api, leaguePoe1, leaguePoe2, refreshLeague]);
+  }, [
+    api,
+    leaguePoe1,
+    leaguePoe2,
+    refreshLeague,
+    refreshCurrency,
+    checkCurrencyLeagueOffers,
+  ]);
 
   // Countdown widget is only useful pre-launch (PoE1)
   useEffect(() => {
     if (!api || leaguePoe1?.stage !== 'login') return;
     void api.closeLeagueWidget();
   }, [api, leaguePoe1?.stage]);
+
+  // Queue-may-be-open reminder in the pre-launch window
+  useEffect(() => {
+    if (!api || !queueReminderEnabled) return;
+
+    let cancelled = false;
+    const notifiedKeys = new Set<string>();
+
+    const check = async () => {
+      if (cancelled || leagueOffer || queueReminder?.preview) return;
+      const now = Date.now();
+      const windowMs = queueReminderMinutes * 60_000;
+      const candidates: Array<{
+        game: 'poe1' | 'poe2';
+        info: LeagueInfo | null;
+      }> = [
+        { game: 'poe1', info: leaguePoe1 },
+        { game: 'poe2', info: leaguePoe2 },
+      ];
+
+      for (const { game, info } of candidates) {
+        if (!info?.startMs || info.stage !== 'countdown') continue;
+        const startMs = info.startMs;
+        const msLeft = startMs - now;
+        if (msLeft <= 0 || msLeft > windowMs) continue;
+        const key = `${game}:${startMs}`;
+        try {
+          const dismissed = await api.getQueueReminderDismissed(game);
+          if (dismissed?.key === key) continue;
+        } catch {
+          continue;
+        }
+        if (cancelled) return;
+        setQueueReminder((prev) => {
+          if (prev?.preview) return prev;
+          if (prev && prev.game === game && prev.startMs === startMs) {
+            return prev;
+          }
+          return {
+            game,
+            leagueName: info.nextName,
+            startMs,
+            minutesBefore: queueReminderMinutes,
+          };
+        });
+        if (!notifiedKeys.has(key)) {
+          notifiedKeys.add(key);
+          void api.showNotification({
+            title: 'Queue may be open',
+            body: `${info.nextName} often opens character create about now.`,
+          });
+        }
+        return;
+      }
+    };
+
+    void check();
+    const id = window.setInterval(() => {
+      void check();
+    }, 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [
+    api,
+    queueReminderEnabled,
+    queueReminderMinutes,
+    leaguePoe1,
+    leaguePoe2,
+    leagueOffer,
+    queueReminder?.preview,
+  ]);
 
   useEffect(() => {
     if (!api || !settingsOpen) return;
@@ -456,8 +841,105 @@ export default function App() {
     return map;
   }, [pageEntries]);
 
+  const activeLayout = useMemo(() => {
+    if (!isLayoutPage(page)) return null;
+    return ensureLayoutHasItems(pageLayouts[page], pageEntryIds);
+  }, [page, pageLayouts, pageEntryIds]);
+
+  useEffect(() => {
+    if (!api || !isLayoutPage(page)) return;
+    const itemKey = pageEntryIds.join('\0');
+    void itemKey;
+    setPageLayouts((prev) => {
+      const ensured = ensureLayoutHasItems(prev[page], pageEntryIds);
+      if (layoutEquals(prev[page], ensured)) return prev;
+      setOrders((ordersPrev) => ({
+        ...ordersPrev,
+        [page]: ensured.sections.flatMap((s) => s.toolIds),
+      }));
+      void api.setPageLayout(page, ensured).then((result) => {
+        if (result?.pageLayouts) setPageLayouts(result.pageLayouts);
+        if (result?.toolOrders) setOrders(result.toolOrders);
+      });
+      return { ...prev, [page]: ensured };
+    });
+  }, [api, page, pageEntryIds]);
+
+  useEffect(() => {
+    setEditingSectionId(null);
+    setSectionsMenuPos(null);
+  }, [page]);
+
+  useEffect(() => {
+    if (!sectionsMenuPos) return;
+    const close = () => setSectionsMenuPos(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    const onPointer = (event: MouseEvent) => {
+      if (sectionsMenuRef.current?.contains(event.target as Node)) return;
+      close();
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onPointer);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onPointer);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [sectionsMenuPos]);
+
+  function openSectionsMenu(event: ReactMouseEvent) {
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest(
+        '.tool-card, .rec-card, .card-context-menu, .app-section-actions, input, textarea, select',
+      )
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const pad = 8;
+    const approxW = 160;
+    const approxH = 48;
+    const x = Math.min(event.clientX, window.innerWidth - approxW - pad);
+    const y = Math.min(event.clientY, window.innerHeight - approxH - pad);
+    setSectionsMenuPos({ x: Math.max(pad, x), y: Math.max(pad, y) });
+  }
+
+  async function persistLayout(nextPage: LayoutPage, layout: PageLayout) {
+    if (!api) return;
+    const normalized = ensureLayoutHasItems(
+      layout,
+      nextPage === page
+        ? pageEntryIds
+        : layout.sections.flatMap((s) => s.toolIds),
+    );
+    setPageLayouts((prev) => ({ ...prev, [nextPage]: normalized }));
+    setOrders((prev) => ({
+      ...prev,
+      [nextPage]: normalized.sections.flatMap((s) => s.toolIds),
+    }));
+    try {
+      const result = await api.setPageLayout(nextPage, normalized);
+      if (result?.pageLayouts) setPageLayouts(result.pageLayouts);
+      if (result?.toolOrders) setOrders(result.toolOrders);
+    } catch (err) {
+      showToast(String(err));
+    }
+  }
+
   async function onReorder(ids: string[]) {
     if (!api) return;
+    if (isLayoutPage(page) && activeLayout && activeLayout.sections.length === 1) {
+      await persistLayout(page, reorderSectionIds(activeLayout, activeLayout.sections[0].id, ids));
+      return;
+    }
     setOrders((prev) => ({ ...prev, [page]: ids }));
     try {
       setOrders(await api.setToolOrder(page, ids));
@@ -466,11 +948,90 @@ export default function App() {
     }
   }
 
+  async function onSectionReorder(sectionId: string, ids: string[]) {
+    if (!isLayoutPage(page) || !activeLayout) return;
+    await persistLayout(page, reorderSectionIds(activeLayout, sectionId, ids));
+  }
+
+  async function onSectionMove(
+    fromSectionId: string,
+    toSectionId: string,
+    itemId: string,
+    beforeId: string | null,
+  ) {
+    if (!isLayoutPage(page) || !activeLayout) return;
+    await persistLayout(
+      page,
+      moveBetweenSections(
+        activeLayout,
+        fromSectionId,
+        toSectionId,
+        itemId,
+        beforeId,
+      ),
+    );
+  }
+
+  async function onAddSection() {
+    if (!isLayoutPage(page) || !activeLayout) return;
+    const next = cloneLayout(activeLayout);
+    next.sections.push({
+      id: newSectionId(page),
+      name: 'New section',
+      toolIds: [],
+    });
+    await persistLayout(page, next);
+  }
+
+  async function onRenameSection(sectionId: string, name: string) {
+    if (!isLayoutPage(page) || !activeLayout) return;
+    const next = cloneLayout(activeLayout);
+    const section = next.sections.find((s) => s.id === sectionId);
+    if (!section) return;
+    section.name = name.trim() || 'Apps';
+    setEditingSectionId(null);
+    await persistLayout(page, next);
+  }
+
+  async function onDeleteSection(sectionId: string) {
+    if (!isLayoutPage(page) || !activeLayout) return;
+    if (activeLayout.sections.length <= 1) return;
+    const next = cloneLayout(activeLayout);
+    const index = next.sections.findIndex((s) => s.id === sectionId);
+    if (index < 0) return;
+    const [removed] = next.sections.splice(index, 1);
+    const targetIndex = Math.max(0, index - 1);
+    next.sections[targetIndex].toolIds = [
+      ...next.sections[targetIndex].toolIds,
+      ...removed.toolIds,
+    ];
+    await persistLayout(page, next);
+  }
+
+  async function onMoveSection(sectionId: string, direction: -1 | 1) {
+    if (!isLayoutPage(page) || !activeLayout) return;
+    const next = cloneLayout(activeLayout);
+    const index = next.sections.findIndex((s) => s.id === sectionId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= next.sections.length) return;
+    const [section] = next.sections.splice(index, 1);
+    next.sections.splice(target, 0, section);
+    await persistLayout(page, next);
+  }
+
+  async function onMoveToolToSection(itemId: string, sectionId: string) {
+    if (!isLayoutPage(page) || !activeLayout) return;
+    const from = activeLayout.sections.find((s) => s.toolIds.includes(itemId));
+    if (!from || from.id === sectionId) return;
+    await onSectionMove(from.id, sectionId, itemId, null);
+  }
+
   const readyCount = tools.filter((t) => t.ready && !t.unused).length;
   const visibleToolCount = tools.filter((t) => !t.unused).length;
   const isLaunchPage = page === 'poe1' || page === 'poe2';
   const canAddApp = page === 'poe1' || page === 'poe2' || page === 'optional';
   const copy = PAGE_COPY[page];
+  const isDev = Boolean(api?.isDev);
 
   async function onRescan() {
     if (!api) return;
@@ -543,8 +1104,124 @@ export default function App() {
 
   async function onRemoveCustom(id: string) {
     if (!api) return;
+    const tool = tools.find((t) => t.id === id);
+    const label = tool?.name || 'this custom item';
+    const ok = window.confirm(`Delete “${label}” permanently? This cannot be undone.`);
+    if (!ok) return;
+    if (editToolId === id) closeEditCustom();
     applyBundle(await api.removeCustom(id));
     showToast('Custom app removed');
+  }
+
+  function onEditCustom(tool: ToolStatus) {
+    if (!tool.isCustom) return;
+    setEditToolId(tool.id);
+    setEditName(tool.name);
+    setEditBlurb(tool.blurb);
+    setEditUrl(tool.isLink ? tool.openUrl || tool.resolvedPath || '' : '');
+    setEditDownloadUrl(tool.downloadUrl || '');
+    setEditCategory(tool.category);
+    setEditPath(tool.isLink ? '' : tool.resolvedPath || tool.customPath || '');
+    setEditBusy(false);
+  }
+
+  function closeEditCustom() {
+    setEditToolId(null);
+    setEditBusy(false);
+  }
+
+  const editingTool = useMemo(
+    () => (editToolId ? tools.find((t) => t.id === editToolId) : null),
+    [editToolId, tools],
+  );
+
+  async function onSaveCustomEdit() {
+    if (!api || !editToolId || !editingTool) return;
+    const name = editName.trim();
+    if (!name) {
+      showToast('Name is required');
+      return;
+    }
+
+    setEditBusy(true);
+    try {
+      const patch: {
+        name: string;
+        blurb: string;
+        category: ToolCategory;
+        kind: 'app' | 'link';
+        url?: string;
+        downloadUrl?: string | null;
+      } = {
+        name,
+        blurb: editBlurb.trim() || editingTool.blurb,
+        category: editCategory,
+        kind: editingTool.isLink ? 'link' : 'app',
+      };
+
+      if (editingTool.isLink) {
+        const url = editUrl.trim();
+        if (!/^https?:\/\//i.test(url)) {
+          showToast('Enter a valid http(s) URL');
+          setEditBusy(false);
+          return;
+        }
+        patch.url = url;
+      } else {
+        const download = editDownloadUrl.trim();
+        patch.downloadUrl = download
+          ? /^https?:\/\//i.test(download)
+            ? download
+            : null
+          : null;
+        if (download && !patch.downloadUrl) {
+          showToast('Download URL must be http(s)');
+          setEditBusy(false);
+          return;
+        }
+      }
+
+      const result = await api.updateCustom(editToolId, patch);
+      applyBundle(result);
+      if (result.pageLayouts) setPageLayouts(result.pageLayouts);
+      if (result.toolOrders) setOrders(result.toolOrders);
+      if (result.error) {
+        showToast(result.error);
+        return;
+      }
+      if (result.ok) {
+        closeEditCustom();
+        showToast('Custom app updated');
+        if (editCategory !== page && isLayoutPage(editCategory)) {
+          setPage(editCategory);
+        }
+      }
+    } catch (err) {
+      showToast(String(err));
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function onEditPickExe() {
+    if (!api || !editToolId || !editingTool || editingTool.isLink) return;
+    setEditBusy(true);
+    try {
+      const result = await api.updateCustom(editToolId, { pickExe: true });
+      applyBundle(result);
+      if (result.canceled) return;
+      if (result.error) {
+        showToast(result.error);
+        return;
+      }
+      const updated = result.tools?.find((t) => t.id === editToolId);
+      if (updated?.resolvedPath) setEditPath(updated.resolvedPath);
+      if (result.ok) showToast('Executable updated');
+    } catch (err) {
+      showToast(String(err));
+    } finally {
+      setEditBusy(false);
+    }
   }
 
   async function onAddApp() {
@@ -788,21 +1465,258 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <div className="workspace-primary">
-                {loading && pageEntries.length === 0 ? (
+              <div
+                className="workspace-primary"
+                onContextMenu={openSectionsMenu}
+              >
+                {loading && pageEntryIds.length === 0 ? (
                   <p className="muted">Scanning for installations…</p>
-                ) : pageEntries.length === 0 ? (
-                  <p className="muted">No apps on this tab. Use Add to include one.</p>
                 ) : (
-                  <section className="category">
+                  <div className="app-sections" onContextMenu={openSectionsMenu}>
+                    {(activeLayout?.sections || []).map((section, index) => {
+                      const moveTargets = (activeLayout?.sections || [])
+                        .filter((s) => s.id !== section.id)
+                        .map((s) => ({ id: s.id, name: s.name }));
+                      return (
+                        <section key={section.id} className="app-section">
+                          <div className="app-section-toolbar">
+                            {editingSectionId === section.id ? (
+                              <input
+                                className="app-section-name-input"
+                                autoFocus
+                                defaultValue={section.name}
+                                aria-label="Section name"
+                                onBlur={(event) => {
+                                  void onRenameSection(
+                                    section.id,
+                                    event.target.value,
+                                  );
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.currentTarget.blur();
+                                  }
+                                  if (event.key === 'Escape') {
+                                    setEditingSectionId(null);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="app-section-label"
+                                onClick={() => setEditingSectionId(section.id)}
+                                title="Rename section"
+                              >
+                                {section.name}
+                              </button>
+                            )}
+                            <div className="app-section-actions">
+                              <button
+                                type="button"
+                                className="info-layout-btn"
+                                disabled={index === 0}
+                                aria-label="Move section up"
+                                onClick={() => void onMoveSection(section.id, -1)}
+                              >
+                                ↑
+                              </button>
+                              <button
+                                type="button"
+                                className="info-layout-btn"
+                                disabled={
+                                  !activeLayout ||
+                                  index >= activeLayout.sections.length - 1
+                                }
+                                aria-label="Move section down"
+                                onClick={() => void onMoveSection(section.id, 1)}
+                              >
+                                ↓
+                              </button>
+                              <button
+                                type="button"
+                                className="info-layout-btn"
+                                disabled={
+                                  !activeLayout ||
+                                  activeLayout.sections.length <= 1
+                                }
+                                aria-label="Delete section"
+                                onClick={() => void onDeleteSection(section.id)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                          <SortableGrid
+                            className="tool-grid"
+                            groupId={section.id}
+                            ids={section.toolIds}
+                            emptyLabel="Drop apps here"
+                            onReorder={(ids) => {
+                              void onSectionReorder(section.id, ids);
+                            }}
+                            onMove={(payload) => {
+                              void onSectionMove(
+                                payload.fromGroupId,
+                                payload.toGroupId,
+                                payload.itemId,
+                                payload.beforeId,
+                              );
+                            }}
+                          >
+                            {(id, bind) => {
+                              const entry = entryById.get(id);
+                              if (!entry || entry.kind !== 'tool') return null;
+                              const tool = entry.tool;
+                              return (
+                                <ToolCard
+                                  tool={tool}
+                                  busy={busyId === tool.id}
+                                  streamerMode={streamerMode}
+                                  sortable={bind}
+                                  moveTargets={moveTargets}
+                                  onMoveToSection={(targetId) => {
+                                    void onMoveToolToSection(tool.id, targetId);
+                                  }}
+                                  onLaunch={() => void onLaunch(tool.id)}
+                                  onPick={() => void onPick(tool.id)}
+                                  onClear={() => void onClear(tool.id)}
+                                  onDownload={() => void onDownload(tool.id)}
+                                  onDismiss={() => void onDismiss(tool.id)}
+                                  onHide={() => void onHide(tool.id)}
+                                  onRestore={() => void onRestore(tool.id)}
+                                  onEdit={
+                                    tool.isCustom
+                                      ? () => onEditCustom(tool)
+                                      : undefined
+                                  }
+                                  onRemoveCustom={
+                                    tool.isCustom
+                                      ? () => void onRemoveCustom(tool.id)
+                                      : undefined
+                                  }
+                                />
+                              );
+                            }}
+                          </SortableGrid>
+                        </section>
+                      );
+                    })}
+                    {!loading && pageEntryIds.length === 0 && (
+                      <p className="muted">
+                        No apps on this tab. Use Add to include one. Right-click
+                        to add a section.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {page === 'optional' && (
+            <div className="app-sections" onContextMenu={openSectionsMenu}>
+              {(activeLayout?.sections || []).map((section, index) => {
+                const moveTargets = (activeLayout?.sections || [])
+                  .filter((s) => s.id !== section.id)
+                  .map((s) => ({ id: s.id, name: s.name }));
+                return (
+                  <section key={section.id} className="app-section">
+                    <div className="app-section-toolbar">
+                      {editingSectionId === section.id ? (
+                        <input
+                          className="app-section-name-input"
+                          autoFocus
+                          defaultValue={section.name}
+                          aria-label="Section name"
+                          onBlur={(event) => {
+                            void onRenameSection(section.id, event.target.value);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur();
+                            }
+                            if (event.key === 'Escape') {
+                              setEditingSectionId(null);
+                            }
+                          }}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="app-section-label"
+                          onClick={() => setEditingSectionId(section.id)}
+                          title="Rename section"
+                        >
+                          {section.name}
+                        </button>
+                      )}
+                      <div className="app-section-actions">
+                        <button
+                          type="button"
+                          className="info-layout-btn"
+                          disabled={index === 0}
+                          aria-label="Move section up"
+                          onClick={() => void onMoveSection(section.id, -1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="info-layout-btn"
+                          disabled={
+                            !activeLayout ||
+                            index >= activeLayout.sections.length - 1
+                          }
+                          aria-label="Move section down"
+                          onClick={() => void onMoveSection(section.id, 1)}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="info-layout-btn"
+                          disabled={
+                            !activeLayout || activeLayout.sections.length <= 1
+                          }
+                          aria-label="Delete section"
+                          onClick={() => void onDeleteSection(section.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
                     <SortableGrid
                       className="tool-grid"
-                      ids={pageEntryIds}
-                      onReorder={(ids) => void onReorder(ids)}
+                      groupId={section.id}
+                      ids={section.toolIds}
+                      emptyLabel="Drop apps here"
+                      onReorder={(ids) => {
+                        void onSectionReorder(section.id, ids);
+                      }}
+                      onMove={(payload) => {
+                        void onSectionMove(
+                          payload.fromGroupId,
+                          payload.toGroupId,
+                          payload.itemId,
+                          payload.beforeId,
+                        );
+                      }}
                     >
                       {(id, bind) => {
                         const entry = entryById.get(id);
-                        if (!entry || entry.kind !== 'tool') return null;
+                        if (!entry) return null;
+                        if (entry.kind === 'rec') {
+                          return (
+                            <RecommendationCard
+                              item={entry.item}
+                              sortable={bind}
+                              onDownload={() => void onDownload(entry.item.id)}
+                              onHide={() => void onHide(entry.item.id)}
+                              onRestore={() => void onRestore(entry.item.id)}
+                            />
+                          );
+                        }
                         const tool = entry.tool;
                         return (
                           <ToolCard
@@ -810,6 +1724,10 @@ export default function App() {
                             busy={busyId === tool.id}
                             streamerMode={streamerMode}
                             sortable={bind}
+                            moveTargets={moveTargets}
+                            onMoveToSection={(targetId) => {
+                              void onMoveToolToSection(tool.id, targetId);
+                            }}
                             onLaunch={() => void onLaunch(tool.id)}
                             onPick={() => void onPick(tool.id)}
                             onClear={() => void onClear(tool.id)}
@@ -817,60 +1735,30 @@ export default function App() {
                             onDismiss={() => void onDismiss(tool.id)}
                             onHide={() => void onHide(tool.id)}
                             onRestore={() => void onRestore(tool.id)}
+                            onEdit={
+                              tool.isCustom
+                                ? () => onEditCustom(tool)
+                                : undefined
+                            }
+                            onRemoveCustom={
+                              tool.isCustom
+                                ? () => void onRemoveCustom(tool.id)
+                                : undefined
+                            }
                           />
                         );
                       }}
                     </SortableGrid>
                   </section>
-                )}
-              </div>
-            </>
-          )}
-
-          {page === 'optional' && (
-            <section className="category">
-              {pageEntries.length === 0 ? (
-                <p className="muted">Nothing here yet. Add an app or restore from Not in use.</p>
-              ) : (
-                <SortableGrid
-                  className="tool-grid"
-                  ids={pageEntryIds}
-                  onReorder={(ids) => void onReorder(ids)}
-                >
-                  {(id, bind) => {
-                    const entry = entryById.get(id);
-                    if (!entry) return null;
-                    if (entry.kind === 'rec') {
-                      return (
-                        <RecommendationCard
-                          item={entry.item}
-                          sortable={bind}
-                          onDownload={() => void onDownload(entry.item.id)}
-                          onHide={() => void onHide(entry.item.id)}
-                          onRestore={() => void onRestore(entry.item.id)}
-                        />
-                      );
-                    }
-                    const tool = entry.tool;
-                    return (
-                      <ToolCard
-                        tool={tool}
-                        busy={busyId === tool.id}
-                        streamerMode={streamerMode}
-                        sortable={bind}
-                        onLaunch={() => void onLaunch(tool.id)}
-                        onPick={() => void onPick(tool.id)}
-                        onClear={() => void onClear(tool.id)}
-                        onDownload={() => void onDownload(tool.id)}
-                        onDismiss={() => void onDismiss(tool.id)}
-                        onHide={() => void onHide(tool.id)}
-                        onRestore={() => void onRestore(tool.id)}
-                      />
-                    );
-                  }}
-                </SortableGrid>
+                );
+              })}
+              {pageEntryIds.length === 0 && (
+                <p className="muted">
+                  Nothing here yet. Add an app or restore from Not in use.
+                  Right-click to add a section.
+                </p>
               )}
-            </section>
+            </div>
           )}
 
           {page === 'unused' && (
@@ -915,6 +1803,9 @@ export default function App() {
                         onDismiss={() => undefined}
                         onHide={() => undefined}
                         onRestore={() => void onRestore(tool.id)}
+                        onEdit={
+                          tool.isCustom ? () => onEditCustom(tool) : undefined
+                        }
                         onRemoveCustom={
                           tool.isCustom
                             ? () => void onRemoveCustom(tool.id)
@@ -1044,6 +1935,169 @@ export default function App() {
           </div>
         )}
 
+        {editToolId && editingTool && (
+          <div className="settings-layer" role="presentation">
+            <button
+              type="button"
+              className="settings-backdrop"
+              aria-label="Close edit dialog"
+              onClick={closeEditCustom}
+            />
+            <div
+              className="settings-sheet add-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="edit-title"
+            >
+              <div className="settings-sheet-handle" aria-hidden />
+              <div className="settings-sheet-head">
+                <h2 id="edit-title" className="settings-sheet-title">
+                  Edit {editingTool.isLink ? 'website' : 'app'}
+                </h2>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={closeEditCustom}
+                >
+                  Close
+                </button>
+              </div>
+              <p className="settings-sheet-copy">
+                Update the name, details, or tab for this custom item.
+              </p>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="edit-name">
+                  Name
+                </label>
+                <input
+                  id="edit-name"
+                  className="settings-input"
+                  type="text"
+                  value={editName}
+                  onChange={(event) => setEditName(event.target.value)}
+                />
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="edit-blurb">
+                  Description
+                </label>
+                <input
+                  id="edit-blurb"
+                  className="settings-input"
+                  type="text"
+                  value={editBlurb}
+                  onChange={(event) => setEditBlurb(event.target.value)}
+                />
+              </div>
+              <div className="settings-field">
+                <label className="settings-field-label" htmlFor="edit-category">
+                  Tab
+                </label>
+                <select
+                  id="edit-category"
+                  className="settings-select"
+                  value={editCategory}
+                  onChange={(event) =>
+                    setEditCategory(event.target.value as ToolCategory)
+                  }
+                >
+                  <option value="poe1">Path of Exile</option>
+                  <option value="poe2">Path of Exile 2</option>
+                  <option value="optional">Optional</option>
+                </select>
+              </div>
+              {editingTool.isLink ? (
+                <div className="settings-field">
+                  <label className="settings-field-label" htmlFor="edit-url">
+                    URL
+                  </label>
+                  <input
+                    id="edit-url"
+                    className="settings-input"
+                    type="url"
+                    value={editUrl}
+                    placeholder="https://…"
+                    onChange={(event) => setEditUrl(event.target.value)}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="settings-field">
+                    <label className="settings-field-label" htmlFor="edit-path">
+                      Executable
+                    </label>
+                    <p
+                      className="settings-field-hint"
+                      id="edit-path"
+                      title={streamerMode ? undefined : editPath || undefined}
+                    >
+                      {editPath
+                        ? streamerMode
+                          ? obscureSensitive(editPath, 'path')
+                          : editPath
+                        : 'No executable path set'}
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      disabled={editBusy}
+                      onClick={() => void onEditPickExe()}
+                    >
+                      Change executable…
+                    </button>
+                  </div>
+                  <div className="settings-field">
+                    <label
+                      className="settings-field-label"
+                      htmlFor="edit-download"
+                    >
+                      Download URL (optional)
+                    </label>
+                    <input
+                      id="edit-download"
+                      className="settings-input"
+                      type="url"
+                      value={editDownloadUrl}
+                      placeholder="https://…"
+                      onChange={(event) =>
+                        setEditDownloadUrl(event.target.value)
+                      }
+                    />
+                  </div>
+                </>
+              )}
+              <div className="settings-sheet-actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={editBusy}
+                  onClick={() => {
+                    if (!editToolId) return;
+                    void onRemoveCustom(editToolId);
+                  }}
+                >
+                  Delete
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={closeEditCustom}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={editBusy}
+                  onClick={() => void onSaveCustomEdit()}
+                >
+                  {editBusy ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {settingsOpen && (
           <div className="settings-layer" role="presentation">
             <button
@@ -1098,6 +2152,27 @@ export default function App() {
                 </label>
               </div>
               <div className="settings-field">
+                <label className="settings-field-label" htmlFor="close-to-tray">
+                  System tray
+                </label>
+                <p className="settings-field-hint">
+                  When enabled, the X button hides the app to the tray instead of
+                  quitting. Use the tray icon to show it again, or Quit from the
+                  tray menu.
+                </p>
+                <label className="settings-check" htmlFor="close-to-tray">
+                  <input
+                    id="close-to-tray"
+                    type="checkbox"
+                    checked={closeToTray}
+                    onChange={(event) => {
+                      void onCloseToTrayChange(event.target.checked);
+                    }}
+                  />
+                  <span>Close to system tray</span>
+                </label>
+              </div>
+              <div className="settings-field">
                 <label className="settings-field-label" htmlFor="info-layout">
                   League & news layout
                 </label>
@@ -1120,25 +2195,111 @@ export default function App() {
                 </select>
               </div>
               <div className="settings-field">
-                <label className="settings-field-label" htmlFor="preview-league-launch">
-                  Preview league LOGIN banner
+                <label className="settings-field-label" htmlFor="queue-reminder">
+                  Queue reminder
                 </label>
                 <p className="settings-field-hint">
-                  Force the launch funnel stage now so you can test the LOGIN!
-                  banner before the league goes live on poe.ninja.
+                  Before official launch, character create / queue often opens
+                  early. We&apos;ll nudge you in that window (estimate — GGG
+                  timing varies).
                 </p>
-                <label className="settings-check" htmlFor="preview-league-launch">
+                <label className="settings-check" htmlFor="queue-reminder">
                   <input
-                    id="preview-league-launch"
+                    id="queue-reminder"
                     type="checkbox"
-                    checked={previewLeagueLaunch}
+                    checked={queueReminderEnabled}
                     onChange={(event) => {
-                      void onPreviewLeagueLaunchChange(event.target.checked);
+                      void onQueueReminderSettingsChange({
+                        enabled: event.target.checked,
+                      });
                     }}
                   />
-                  <span>Show LOGIN! launch banner (test mode)</span>
+                  <span>Remind me before league start</span>
                 </label>
+                <label
+                  className="settings-field-label"
+                  htmlFor="queue-reminder-minutes"
+                  style={{ marginTop: '0.65rem' }}
+                >
+                  Minutes before launch
+                </label>
+                <select
+                  id="queue-reminder-minutes"
+                  className="settings-select"
+                  value={queueReminderMinutes}
+                  disabled={!queueReminderEnabled}
+                  onChange={(event) => {
+                    void onQueueReminderSettingsChange({
+                      minutes: Number(event.target.value),
+                    });
+                  }}
+                >
+                  <option value={60}>60</option>
+                  <option value={90}>90</option>
+                  <option value={120}>120</option>
+                </select>
               </div>
+              {isDev && (
+                <>
+                  <div className="settings-field">
+                    <label
+                      className="settings-field-label"
+                      htmlFor="preview-league-launch"
+                    >
+                      Preview league LOGIN banner
+                    </label>
+                    <p className="settings-field-hint">
+                      Dev only. Force the LOGIN! banner before go-live.
+                    </p>
+                    <label
+                      className="settings-check"
+                      htmlFor="preview-league-launch"
+                    >
+                      <input
+                        id="preview-league-launch"
+                        type="checkbox"
+                        checked={previewLeagueLaunch}
+                        onChange={(event) => {
+                          void onPreviewLeagueLaunchChange(
+                            event.target.checked,
+                          );
+                        }}
+                      />
+                      <span>Show LOGIN! launch banner (test mode)</span>
+                    </label>
+                  </div>
+                  <div className="settings-field">
+                    <p className="settings-field-label">
+                      Preview league switch prompt
+                    </p>
+                    <p className="settings-field-hint">
+                      Dev only. Shows the new-league exchange switch dialog.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={onPreviewLeagueOffer}
+                    >
+                      Show switch prompt
+                    </button>
+                  </div>
+                  <div className="settings-field">
+                    <p className="settings-field-label">
+                      Preview queue reminder
+                    </p>
+                    <p className="settings-field-hint">
+                      Dev only. Shows the pre-launch queue nudge for this tab.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={onPreviewQueueReminder}
+                    >
+                      Show queue reminder
+                    </button>
+                  </div>
+                </>
+              )}
               <div className="settings-field">
                 <label className="settings-field-label" htmlFor="currency-league-poe1">
                   PoE1 poe.ninja exchange league
@@ -1289,7 +2450,121 @@ export default function App() {
       </div>
       </div>
 
+      {sectionsMenuPos &&
+        createPortal(
+          <div
+            ref={sectionsMenuRef}
+            className="card-context-menu"
+            style={{ left: sectionsMenuPos.x, top: sectionsMenuPos.y }}
+            role="menu"
+            aria-label="Section actions"
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="card-context-item"
+              onClick={() => {
+                setSectionsMenuPos(null);
+                void onAddSection();
+              }}
+            >
+              Add section
+            </button>
+          </div>,
+          document.body,
+        )}
       {toast && <div className="toast">{toast}</div>}
+
+      {leagueOffer && (
+        <div className="league-offer-layer" role="presentation">
+          <button
+            type="button"
+            className="league-offer-backdrop"
+            aria-label="Dismiss league offer"
+            onClick={() => void onDismissLeagueOffer()}
+          />
+          <div
+            className="league-offer-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="league-offer-title"
+          >
+            <p className="league-offer-kicker">
+              {leagueOffer.preview ? 'Preview' : 'New league'}
+              {leagueOffer.game === 'poe2' ? ' · PoE2' : ' · PoE1'}
+            </p>
+            <h2 id="league-offer-title" className="league-offer-title">
+              Switch to {leagueOffer.suggested.name}?
+            </h2>
+            <p className="league-offer-copy">
+              Live exchange rates for the new league are ready. You&apos;re
+              currently on {leagueOffer.currentName}.
+            </p>
+            <div className="league-offer-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void onAcceptLeagueOffer()}
+              >
+                Switch
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => void onDismissLeagueOffer()}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {queueReminder && !leagueOffer && (
+        <div className="league-offer-layer" role="presentation">
+          <button
+            type="button"
+            className="league-offer-backdrop"
+            aria-label="Dismiss queue reminder"
+            onClick={() => void onDismissQueueReminder()}
+          />
+          <div
+            className="league-offer-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="queue-reminder-title"
+          >
+            <p className="league-offer-kicker">
+              {queueReminder.preview ? 'Preview' : 'Queue window'}
+              {queueReminder.game === 'poe2' ? ' · PoE2' : ' · PoE1'}
+            </p>
+            <h2 id="queue-reminder-title" className="league-offer-title">
+              Queue may be open for {queueReminder.leagueName}
+            </h2>
+            <p className="league-offer-copy">
+              Character create often opens about {queueReminder.minutesBefore}{' '}
+              minutes before official start. Jump in early if you want a head
+              start.
+            </p>
+            <div className="league-offer-actions">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void onLaunchFromQueueReminder()}
+              >
+                Launch
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => void onDismissQueueReminder()}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

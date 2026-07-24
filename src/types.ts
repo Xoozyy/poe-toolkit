@@ -94,6 +94,23 @@ export interface EconomyLeague {
   url?: string;
 }
 
+export interface CurrencyLeagueOffer {
+  game: 'poe1' | 'poe2';
+  currentLeague: string;
+  currentName: string;
+  suggested: { id: string; name: string };
+  /** True when shown from Settings test control */
+  preview?: boolean;
+}
+
+export interface QueueReminderOffer {
+  game: 'poe1' | 'poe2';
+  leagueName: string;
+  startMs: number;
+  minutesBefore: number;
+  preview?: boolean;
+}
+
 export interface CurrencyLeaguesResult {
   ok: boolean;
   game?: 'poe1' | 'poe2';
@@ -116,7 +133,21 @@ export interface ToolsBundle {
 
 export type OrderPage = 'poe1' | 'poe2' | 'optional' | 'unused';
 
+export type LayoutPage = 'poe1' | 'poe2' | 'optional';
+
 export type ToolOrders = Record<OrderPage, string[]>;
+
+export interface PageSection {
+  id: string;
+  name: string;
+  toolIds: string[];
+}
+
+export interface PageLayout {
+  sections: PageSection[];
+}
+
+export type PageLayouts = Record<LayoutPage, PageLayout>;
 
 export type InfoLayout = 'compact' | 'normal';
 
@@ -156,6 +187,14 @@ export interface PoeToolkitApi {
     rate?: CurrencyExchangeRate;
     error?: string;
   }>;
+  getCurrencyLeagueOffers: () => Promise<{
+    ok: boolean;
+    offers: CurrencyLeagueOffer[];
+  }>;
+  dismissCurrencyLeagueOffer: (
+    game: 'poe1' | 'poe2',
+    leagueId: string,
+  ) => Promise<{ ok: boolean }>;
   getInfoLayout: () => Promise<InfoLayout>;
   setInfoLayout: (
     layout: InfoLayout,
@@ -168,6 +207,26 @@ export interface PoeToolkitApi {
   setStreamerMode: (
     enabled: boolean,
   ) => Promise<{ ok: boolean; streamerMode: boolean }>;
+  getCloseToTray: () => Promise<boolean>;
+  setCloseToTray: (
+    enabled: boolean,
+  ) => Promise<{ ok: boolean; closeToTray: boolean }>;
+  getQueueReminder: () => Promise<{ enabled: boolean; minutes: number }>;
+  setQueueReminder: (payload: {
+    enabled?: boolean;
+    minutes?: number;
+  }) => Promise<{ ok: boolean; enabled: boolean; minutes: number }>;
+  getQueueReminderDismissed: (
+    game: 'poe1' | 'poe2',
+  ) => Promise<{ ok: boolean; key: string | null }>;
+  dismissQueueReminder: (
+    game: 'poe1' | 'poe2',
+    key: string,
+  ) => Promise<{ ok: boolean }>;
+  showNotification: (payload: {
+    title: string;
+    body: string;
+  }) => Promise<{ ok: boolean }>;
   getStorageInfo: () => Promise<StorageInfo>;
   openStorageFolder: () => Promise<{ ok: boolean; error?: string }>;
   openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
@@ -190,14 +249,39 @@ export interface PoeToolkitApi {
     blurb?: string;
     downloadUrl?: string;
   }) => Promise<ToolsBundle>;
+  updateCustom: (
+    id: string,
+    patch: {
+      name?: string;
+      blurb?: string;
+      category?: ToolCategory;
+      kind?: 'app' | 'link';
+      url?: string;
+      exePath?: string;
+      downloadUrl?: string | null;
+      pickExe?: boolean;
+    },
+  ) => Promise<
+    ToolsBundle & {
+      pageLayouts?: PageLayouts;
+      toolOrders?: ToolOrders;
+    }
+  >;
   removeCustom: (id: string) => Promise<ToolsBundle>;
   getToolOrders: () => Promise<ToolOrders>;
   setToolOrder: (page: OrderPage, ids: string[]) => Promise<ToolOrders>;
+  getPageLayouts: () => Promise<PageLayouts>;
+  getPageLayout: (page: LayoutPage) => Promise<PageLayout>;
+  setPageLayout: (
+    page: LayoutPage,
+    layout: PageLayout,
+  ) => Promise<{ pageLayouts: PageLayouts; toolOrders: ToolOrders }>;
   windowMinimize: () => Promise<void>;
   windowMaximize: () => Promise<void>;
   windowClose: () => Promise<void>;
   windowIsMaximized: () => Promise<boolean>;
   onWindowMaximized: (cb: (maximized: boolean) => void) => () => void;
+  isDev: boolean;
 }
 
 declare global {

@@ -2,9 +2,12 @@ const {
   app,
   BrowserWindow,
   Menu,
+  Tray,
+  nativeImage,
   shell,
   ipcMain,
   dialog,
+  Notification,
 } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -23,22 +26,34 @@ const {
   getLeague,
   getCurrencyLeague,
   setCurrencyLeague,
+  getCurrencyLeagueOfferDismissed,
+  setCurrencyLeagueOfferDismissed,
   getInfoLayout,
   setInfoLayout,
   getPreviewLeagueLaunch,
   setPreviewLeagueLaunch,
+  getQueueReminderSettings,
+  setQueueReminderSettings,
+  getQueueReminderDismissed,
+  setQueueReminderDismissed,
   getStreamerMode,
   setStreamerMode,
+  getCloseToTray,
+  setCloseToTray,
   getCurrencyPairIds,
   setCurrencyPairIds,
   configPath,
   setUnused,
   addCustomApp,
+  updateCustomApp,
   removeCustomApp,
   markAnnouncementRead,
   getReadAnnouncementIds,
   getToolOrders,
   setToolOrder,
+  getPageLayouts,
+  getPageLayout,
+  setPageLayout,
 } = require('./config.cjs');
 const { getLeagueInfo } = require('./league.cjs');
 const { fetchAnnouncements } = require('./announcements.cjs');
@@ -46,6 +61,7 @@ const {
   fetchCurrencyExchange,
   fetchEconomyLeagues,
   pickDefaultLeague,
+  getSuggestedChallengeLeague,
   listCurrencyPairs,
   normalizeGame,
 } = require('./currency.cjs');
@@ -80,13 +96,78 @@ const isDev = !app.isPackaged;
 let mainWindow = null;
 /** @type {BrowserWindow | null} */
 let leagueWidget = null;
+/** @type {Tray | null} */
+let tray = null;
+let isQuitting = false;
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function hideMainWindowToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.hide();
+}
+
+function quitApp() {
+  isQuitting = true;
+  if (leagueWidget && !leagueWidget.isDestroyed()) {
+    leagueWidget.destroy();
+    leagueWidget = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.destroy();
+    mainWindow = null;
+  }
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
+  app.quit();
+}
+
+function createTray() {
+  if (tray) return tray;
+  const iconPath = path.join(__dirname, 'assets', 'tray.png');
+  let icon = nativeImage.createFromPath(iconPath);
+  if (icon.isEmpty()) {
+    icon = nativeImage.createEmpty();
+  } else {
+    icon = icon.resize({ width: 16, height: 16 });
+  }
+  tray = new Tray(icon);
+  tray.setToolTip('PoE Toolkit');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: 'Show PoE Toolkit',
+        click: () => showMainWindow(),
+      },
+      { type: 'separator' },
+      {
+        label: 'Quit',
+        click: () => quitApp(),
+      },
+    ]),
+  );
+  tray.on('double-click', () => showMainWindow());
+  tray.on('click', () => showMainWindow());
+  return tray;
+}
 
 async function resolveLeagueInfo(game = 'poe1') {
   const listed = await fetchEconomyLeagues(game);
   return getLeagueInfo(getLeague(game), {
     game,
     economyLeagues: listed.leagues || [],
-    forcePreview: game === 'poe1' ? getPreviewLeagueLaunch() : false,
+    forcePreview:
+      isDev && game === 'poe1' ? getPreviewLeagueLaunch() : false,
   });
 }
 
@@ -117,10 +198,16 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      additionalArguments: isDev ? ['--poe-toolkit-dev'] : [],
     },
   });
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.on('close', (event) => {
+    if (isQuitting || !getCloseToTray()) return;
+    event.preventDefault();
+    hideMainWindowToTray();
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -168,6 +255,7 @@ function createLeagueWidget() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      additionalArguments: isDev ? ['--poe-toolkit-dev'] : [],
     },
   });
 
@@ -215,10 +303,29 @@ function registerIpc() {
     else win.maximize();
   });
   ipcMain.handle('window:close', (event) => {
-    BrowserWindow.fromWebContents(event.sender)?.close();
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return;
+    if (win === mainWindow && getCloseToTray() && !isQuitting) {
+      hideMainWindowToTray();
+      return;
+    }
+    win.close();
   });
   ipcMain.handle('window:isMaximized', (event) => {
     return Boolean(BrowserWindow.fromWebContents(event.sender)?.isMaximized());
+  });
+  ipcMain.handle('ui:getCloseToTray', () => getCloseToTray());
+  ipcMain.handle('ui:setCloseToTray', (_event, enabled) => {
+    const closeToTray = setCloseToTray(Boolean(enabled));
+    return { ok: true, closeToTray };
+  });
+  ipcMain.handle('ui:showMainWindow', () => {
+    showMainWindow();
+    return { ok: true };
+  });
+  ipcMain.handle('ui:quitApp', () => {
+    quitApp();
+    return { ok: true };
   });
 
   ipcMain.handle('tools:list', () => listTools());
@@ -237,8 +344,11 @@ function registerIpc() {
     }
     return { ok: true };
   });
-  ipcMain.handle('ui:getPreviewLeagueLaunch', () => getPreviewLeagueLaunch());
+  ipcMain.handle('ui:getPreviewLeagueLaunch', () =>
+    isDev ? getPreviewLeagueLaunch() : false,
+  );
   ipcMain.handle('ui:setPreviewLeagueLaunch', (_event, enabled) => {
+    if (!isDev) return { ok: false, previewLeagueLaunch: false };
     const previewLeagueLaunch = setPreviewLeagueLaunch(Boolean(enabled));
     return { ok: true, previewLeagueLaunch };
   });
@@ -246,6 +356,28 @@ function registerIpc() {
   ipcMain.handle('ui:setStreamerMode', (_event, enabled) => {
     const streamerMode = setStreamerMode(Boolean(enabled));
     return { ok: true, streamerMode };
+  });
+  ipcMain.handle('ui:getQueueReminder', () => getQueueReminderSettings());
+  ipcMain.handle('ui:setQueueReminder', (_event, payload) => {
+    const settings = setQueueReminderSettings(payload || {});
+    return { ok: true, ...settings };
+  });
+  ipcMain.handle('ui:getQueueReminderDismissed', (_event, game) => ({
+    ok: true,
+    key: getQueueReminderDismissed(game === 'poe2' ? 'poe2' : 'poe1'),
+  }));
+  ipcMain.handle('ui:dismissQueueReminder', (_event, game, key) => {
+    const g = game === 'poe2' ? 'poe2' : 'poe1';
+    setQueueReminderDismissed(typeof key === 'string' ? key : null, g);
+    return { ok: true };
+  });
+  ipcMain.handle('ui:showNotification', (_event, payload) => {
+    const title = String(payload?.title || 'PoE Toolkit');
+    const body = String(payload?.body || '');
+    if (!Notification.isSupported()) return { ok: false };
+    const note = new Notification({ title, body });
+    note.show();
+    return { ok: true };
   });
   ipcMain.handle('announcements:list', async () => {
     const result = await fetchAnnouncements(5);
@@ -322,6 +454,7 @@ function registerIpc() {
       return { ok: false, error: 'League is not currently available on poe.ninja' };
     }
     setCurrencyLeague(id, g);
+    setCurrencyLeagueOfferDismissed(id, g);
     const rate = await fetchCurrencyExchange(
       id,
       listed.leagues,
@@ -335,6 +468,32 @@ function registerIpc() {
       leagues: listed.leagues,
       rate,
     };
+  });
+  ipcMain.handle('currency:getLeagueOffers', async () => {
+    const offers = [];
+    for (const game of ['poe1', 'poe2']) {
+      const { league, leagues } = await resolveCurrencyLeague(game);
+      const suggested = getSuggestedChallengeLeague(leagues, league);
+      if (!suggested) continue;
+      const dismissed = getCurrencyLeagueOfferDismissed(game);
+      if (dismissed === suggested.id) continue;
+      const currentEntry = (leagues || []).find((entry) => entry.id === league);
+      offers.push({
+        game,
+        currentLeague: league,
+        currentName: currentEntry?.name || league,
+        suggested,
+      });
+    }
+    return { ok: true, offers };
+  });
+  ipcMain.handle('currency:dismissLeagueOffer', (_event, game, leagueId) => {
+    const g = normalizeGame(game);
+    const dismissed = setCurrencyLeagueOfferDismissed(
+      typeof leagueId === 'string' ? leagueId : null,
+      g,
+    );
+    return { ok: true, dismissed };
   });
   ipcMain.handle('ui:getInfoLayout', () => getInfoLayout());
   ipcMain.handle('ui:setInfoLayout', (_event, layout) => {
@@ -528,9 +687,72 @@ function registerIpc() {
     };
   });
 
+  ipcMain.handle('tools:updateCustom', async (event, id, patch) => {
+    const existing = readConfig().customApps.find((a) => a.id === id);
+    if (!existing) {
+      return {
+        ok: false,
+        error: 'Custom app not found.',
+        tools: listTools(),
+        recommendations: listRecommendations(),
+      };
+    }
+
+    const nextPatch = { ...(patch && typeof patch === 'object' ? patch : {}) };
+
+    if (nextPatch.pickExe) {
+      const exePath = await pickExeDialog(event, 'Choose application executable');
+      if (!exePath) {
+        return {
+          ok: false,
+          canceled: true,
+          tools: listTools(),
+          recommendations: listRecommendations(),
+        };
+      }
+      nextPatch.exePath = exePath;
+      nextPatch.kind = 'app';
+      delete nextPatch.pickExe;
+    }
+
+    if (nextPatch.kind !== 'link' && nextPatch.exePath) {
+      if (!pathExists(nextPatch.exePath)) {
+        return {
+          ok: false,
+          error: 'Selected file does not exist.',
+          tools: listTools(),
+          recommendations: listRecommendations(),
+        };
+      }
+    }
+
+    const result = updateCustomApp(id, nextPatch);
+    if (!result.ok) {
+      return {
+        ok: false,
+        error: result.error || 'Could not update custom app.',
+        tools: listTools(),
+        recommendations: listRecommendations(),
+      };
+    }
+
+    return {
+      ok: true,
+      tools: listTools(),
+      recommendations: listRecommendations(),
+      pageLayouts: getPageLayouts(),
+      toolOrders: getToolOrders(),
+    };
+  });
+
   ipcMain.handle('tools:getOrders', () => getToolOrders());
   ipcMain.handle('tools:setOrder', (_event, page, ids) => {
     return setToolOrder(page, ids);
+  });
+  ipcMain.handle('tools:getPageLayouts', () => getPageLayouts());
+  ipcMain.handle('tools:getPageLayout', (_event, page) => getPageLayout(page));
+  ipcMain.handle('tools:setPageLayout', (_event, page, layout) => {
+    return setPageLayout(page, layout);
   });
 }
 
@@ -538,13 +760,20 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   registerIpc();
   readConfig();
+  createTray();
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showMainWindow();
   });
 });
 
+app.on('before-quit', () => {
+  isQuitting = true;
+});
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (process.platform !== 'darwin' && !getCloseToTray()) {
+    app.quit();
+  }
 });

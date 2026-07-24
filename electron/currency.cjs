@@ -86,6 +86,26 @@ function pickDefaultLeague(leagues) {
   return standard?.id || list[0]?.id || 'Standard';
 }
 
+function findLeagueEntry(leagues, id) {
+  const list = Array.isArray(leagues) ? leagues : [];
+  return list.find((entry) => entry?.id === id) || null;
+}
+
+/**
+ * Challenge league to offer when it differs from the user's selected exchange league.
+ * @returns {{ id: string, name: string } | null}
+ */
+function getSuggestedChallengeLeague(leagues, selectedLeagueId) {
+  const challengeId = pickDefaultLeague(leagues);
+  if (!challengeId || isPermanentLeague(challengeId)) return null;
+  if (challengeId === selectedLeagueId) return null;
+  const entry = findLeagueEntry(leagues, challengeId);
+  return {
+    id: challengeId,
+    name: entry?.name || challengeId,
+  };
+}
+
 function listCurrencyPairs() {
   return CURRENCY_PAIRS.map((pair) => ({
     id: pair.id,
@@ -254,7 +274,9 @@ module.exports = {
   fetchCurrencyExchange,
   fetchEconomyLeagues,
   pickDefaultLeague,
+  getSuggestedChallengeLeague,
   listCurrencyPairs,
   normalizeCurrencyPairIds,
   normalizeGame,
+  isPermanentLeague,
 };
